@@ -1,7 +1,7 @@
 name: dealbot
 on:
   schedule:
-    - cron: "*/15 * * * *"   # 15분마다 (GitHub 사정으로 몇 분 늦을 수 있음)
+    - cron: "*/30 * * * *"   # 30분마다 (비공개 저장소 무료 한도 월 2,000분 이내) (GitHub 사정으로 몇 분 늦을 수 있음)
   workflow_dispatch:          # Actions 탭에서 수동 실행
 permissions:
   contents: write
