@@ -15,7 +15,7 @@ class FakeTG:
     chat_id = "1"
     def __init__(self): self.sent, self.queue = [], []
     def send(self, t): self.sent.append(t)
-    def updates(self, offset=0): return [u for u in self.queue if u["update_id"] >= offset]
+    def updates(self, offset=0, wait=0): return [u for u in self.queue if u["update_id"] >= offset]
 
 
 def items(*prices, title="삼성 갤럭시 버즈3 프로"):
@@ -118,3 +118,10 @@ def test_real_feed_quirks():
 <description>a&nbsp;b &copy; c</description></item></channel></rss>""".encode()
     d = sources.parse_rss(xml, "뽐뿌")[0]
     assert (d.mall, d.name, d.price) == ("롯데온", "갤럭시 탭&커버", 9490)
+
+
+def test_serve_loop_saves_and_stops(tmp_path):
+    app, tg = make(lambda q: [], tmp_path)
+    saves = []
+    app.serve(hours=0.0001, save=lambda: saves.append(1), save_every=0)
+    assert saves  # 끝날 때 반드시 저장

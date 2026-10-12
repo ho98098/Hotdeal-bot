@@ -1,7 +1,7 @@
 # 이 파일을 config.yaml 로 복사한 뒤 값을 채우세요.
 # 토큰과 API 키는 이 파일에 쓰지 말고 GitHub 저장소 Secrets 에 넣습니다.
 
-interval_minutes: 10        # 확인 주기
+interval_minutes: 5         # 특가 확인 주기 (명령은 즉시 응답)
 discount_threshold: 0.15    # 시세보다 15% 이상 싸면 알림
 min_price: 5000             # 이 금액 미만 상품은 무시
 request_delay_seconds: 2    # 사이트 요청 사이 간격 (차단 방지)

@@ -27,11 +27,11 @@ class App:
         self.delay = float(cfg.get("request_delay_seconds", 2))
 
     # ---------- 텔레그램 명령 ----------
-    def handle_commands(self):
+    def handle_commands(self, wait=0):
         """새 명령을 처리. /check 가 있었으면 True."""
         offset = int(self.store.get_meta("tg_offset", 0))
         want_check = False
-        for u in self.tg.updates(offset):
+        for u in self.tg.updates(offset, wait) if wait else self.tg.updates(offset):
             self.store.set_meta("tg_offset", u["update_id"] + 1)
             msg = u.get("message") or {}
             if str(msg.get("chat", {}).get("id")) != self.tg.chat_id:
@@ -147,6 +147,29 @@ class App:
                 self.store.set_meta("fail_notice", today)
                 self.tg.send(f"주의: 이번 확인에서 다나와 시세 조회가 {self.lookup_fail}번 모두 실패했어요.")
         return n
+
+    def serve(self, hours=5.7, save=None, save_every=600):
+        """GitHub Actions 상시 실행: 명령은 즉시 응답, 특가는 interval 마다 확인, 정해진 시간 뒤 종료."""
+        interval = float(self.cfg.get("interval_minutes", 5)) * 60
+        end = time.time() + hours * 3600
+        next_run = last_save = 0
+        while time.time() < end:
+            try:
+                force = self.handle_commands(wait=25)
+                if force or time.time() >= next_run:
+                    n = self.run_once()
+                    log.info("확인 완료, 알림 %d건", n)
+                    if force:
+                        self.tg.send(f"확인 완료: 알림 {n}건")
+                    next_run = time.time() + interval
+            except Exception:
+                log.exception("실행 중 오류")
+                time.sleep(10)
+            if save and time.time() - last_save > save_every:
+                save()
+                last_save = time.time()
+        if save:
+            save()
 
     def run_forever(self):
         interval = float(self.cfg.get("interval_minutes", 10)) * 60

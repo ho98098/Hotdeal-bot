@@ -57,7 +57,8 @@ def main():
         return
     if not cfg["telegram"].get("bot_token"):
         sys.exit("텔레그램 봇 토큰이 없습니다.")
-    store = Store(cfg.get("db_path", "dealbot.db"))
+    store_path = cfg.get("db_path", "dealbot.db")
+    store = Store(store_path)
     tg = Telegram(cfg["telegram"]["bot_token"], cfg["telegram"].get("chat_id") or "")
     if not tg.chat_id:
         tg.chat_id = claim_owner(tg, store) or ""
@@ -69,6 +70,18 @@ def main():
         tg.send("특가 알림 봇 연결 확인")
     elif cmd == "once":
         print("알림", app.run_once(), "건")
+    elif cmd == "serve":  # GitHub Actions 상시 실행
+        import subprocess
+
+        def save():
+            sh = lambda *a: subprocess.run(a, capture_output=True)
+            sh("git", "add", "-f", store_path)
+            if sh("git", "diff", "--cached", "--quiet").returncode:
+                sh("git", "commit", "-m", "가격 기록 갱신 [skip ci]")
+                sh("git", "pull", "--rebase", "-X", "theirs")
+                logging.info("기록 저장: %s", sh("git", "push").returncode == 0)
+
+        app.serve(hours=float(os.environ.get("SERVE_HOURS", 5.7)), save=save)
     elif cmd == "action":  # GitHub Actions: 명령 처리 + 한 번 확인 후 종료
         forced = app.handle_commands()
         n = app.run_once()

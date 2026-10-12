@@ -15,7 +15,8 @@ class Telegram:
         )
         r.raise_for_status()
 
-    def updates(self, offset=0):
-        r = requests.get(f"{self.base}/getUpdates", params={"offset": offset, "timeout": 0}, timeout=15)
+    def updates(self, offset=0, wait=0):
+        """wait 초 동안 새 메시지를 기다림 (롱 폴링: 메시지가 오면 즉시 반환)"""
+        r = requests.get(f"{self.base}/getUpdates", params={"offset": offset, "timeout": wait}, timeout=wait + 15)
         r.raise_for_status()
         return r.json().get("result", [])

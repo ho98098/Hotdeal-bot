@@ -1,8 +1,10 @@
 name: dealbot
+# 공개 저장소에서 상시 실행: 한 번 실행되면 약 5시간 40분 동안 켜져 있고,
+# 30분마다 예약된 다음 실행이 대기하다가 앞 실행이 끝나면 바로 이어받습니다.
 on:
   schedule:
-    - cron: "*/30 * * * *"   # 30분마다 (비공개 저장소 무료 한도 월 2,000분 이내) (GitHub 사정으로 몇 분 늦을 수 있음)
-  workflow_dispatch:          # Actions 탭에서 수동 실행
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
 permissions:
   contents: write
 concurrency:
@@ -11,7 +13,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -19,16 +21,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m dealbot action
+      - run: |
+          git config user.name "dealbot"
+          git config user.email "dealbot@users.noreply.github.com"
+          python -m dealbot serve
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      - name: 가격 기록 저장
-        if: always()
-        run: |
-          git config user.name "dealbot"
-          git config user.email "dealbot@users.noreply.github.com"
-          git add -f dealbot.db
-          git diff --cached --quiet || git commit -m "가격 기록 갱신 [skip ci]"
-          git pull --rebase -X theirs || true
-          git push || true
+          SERVE_HOURS: "5.7"
