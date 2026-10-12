@@ -1,5 +1,5 @@
 """실행: python -m dealbot [run|once|action|test]
-비밀값은 환경변수(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)가
+비밀값은 환경변수(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)가
 config.yaml 보다 우선합니다. GitHub Actions 에서는 저장소 Secrets 로 넣습니다."""
 import logging
 import os
@@ -55,10 +55,6 @@ def main():
         if not tg.chat_id:
             print("아직 봇에게 /start 를 보낸 채팅이 없습니다. 텔레그램에서 봇에게 /start 를 보내주세요.")
             return
-    if not cfg["naver"].get("client_id"):
-        logging.warning("네이버 API 키가 없어 시세 비교를 건너뜁니다. 명령만 처리합니다.")
-        App(cfg, store, tg, search_fn=lambda q: []).handle_commands()
-        return
     app = App(cfg, store, tg)
     if cmd == "test":
         tg.send("특가 알림 봇 연결 확인")

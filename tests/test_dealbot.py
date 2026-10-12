@@ -39,9 +39,24 @@ def test_parse_title():
     assert sources.parse_title("[쿠팡] 갤럭시 버즈3 (150,000원/무료) [3]") == ("쿠팡", "갤럭시 버즈3", 150000)
 
 
-def test_market_price_drops_accessories():
-    ref, low = market.market_price(items(200000, 210000, 190000, 205000, 9900))
-    assert ref == 202500 and low["price"] == 190000
+def test_market_price_first_product():
+    assert market.market_price(items(200000, 210000, 190000))[0] == 200000
+    assert market.market_price(items(9900, 200000, 210000, 205000))[0] == 205000  # 튀는 첫 항목
+
+
+DANAWA = """<ul><li class="prod_item prod_layer" id="productItem1">
+<p class="prod_name"><a href="https://prod.danawa.com/info/?pcode=1">삼성전자 갤럭시 버즈3 프로 SM-R630N</a></p>
+<div class="prod_pricelist"><ul><li><p class="price_sect"><a><strong>217,980</strong>원</a></p></li></ul></div></li>
+<li class="prod_item" id="adPointItem"><p class="prod_name"><a href="x">광고 상품</a></p><p class="price_sect"><strong>1,000</strong></p></li>
+<li class="prod_item" id="productItem2"><p class="prod_name"><a href="y">삼성전자 갤럭시 버즈3 프로 이어버드 단품</a></p>
+<p class="price_sect"><span>중고</span><strong>59,900</strong></p></li></ul>"""
+
+
+def test_parse_danawa_and_filter():
+    its = market.parse_danawa(DANAWA)
+    assert [i["price"] for i in its] == [217980]   # 광고 제외, 중고 가격 제외
+    its2 = [{"title": "삼성전자 갤럭시 버즈3 프로 이어버드 단품", "price": 59900, "mall": "", "link": ""}]
+    assert market.relevant(its2, "갤럭시 버즈3 프로") == []
 
 
 def test_relevant_filters_unrelated():
@@ -68,6 +83,18 @@ def test_watchlist_uses_history_and_dedupes(tmp_path):
     price["low"] = 80000
     assert app.check_watchlist() == 1 and "최근 30일" in tg.sent[0]
     assert app.check_watchlist() == 0       # 같은 가격으로는 재알림 없음
+
+
+def test_price_command_and_fail_notice(tmp_path):
+    app, tg = make(lambda q: items(200000, title=q), tmp_path)
+    tg.queue = [{"update_id": 1, "message": {"chat": {"id": 1}, "text": "/price 갤럭시 버즈3 프로"}}]
+    app.handle_commands()
+    assert "200,000원" in tg.sent[0]
+    def boom(q): raise RuntimeError("blocked")
+    app2, tg2 = make(boom, tmp_path / "..")
+    app2.store.watch_add("갤럭시 버즈3 프로")
+    app2.run_once(); app2.run_once()
+    assert sum("실패" in t for t in tg2.sent) == 1
 
 
 def test_commands(tmp_path):
