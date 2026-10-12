@@ -46,6 +46,15 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
+    if cmd == "dump":  # 진단용: 다나와 원본 페이지 저장
+        import requests as rq
+        from . import market
+        os.makedirs("debug", exist_ok=True)
+        for i, q in enumerate(sys.argv[2:]):
+            r = rq.get(market.URL, params={"query": q}, headers=market.HEADERS, timeout=15)
+            open(f"debug/danawa{i}.html", "w", encoding="utf-8").write(r.text)
+            print(q, r.status_code, len(r.text), market.parse_danawa(r.text)[:5])
+        return
     if not cfg["telegram"].get("bot_token"):
         sys.exit("텔레그램 봇 토큰이 없습니다.")
     store = Store(cfg.get("db_path", "dealbot.db"))
@@ -56,15 +65,6 @@ def main():
             print("아직 봇에게 /start 를 보낸 채팅이 없습니다. 텔레그램에서 봇에게 /start 를 보내주세요.")
             return
     app = App(cfg, store, tg)
-    if cmd == "dump":  # 진단용: 다나와 원본 페이지 저장
-        import requests as rq
-        from . import market
-        os.makedirs("debug", exist_ok=True)
-        for i, q in enumerate(sys.argv[2:]):
-            r = rq.get(market.URL, params={"query": q}, headers=market.HEADERS, timeout=15)
-            open(f"debug/danawa{i}.html", "w", encoding="utf-8").write(r.text)
-            print(q, r.status_code, len(r.text), market.parse_danawa(r.text)[:5])
-        return
     if cmd == "test":
         tg.send("특가 알림 봇 연결 확인")
     elif cmd == "once":
