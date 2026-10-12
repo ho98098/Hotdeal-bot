@@ -22,7 +22,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - if: github.event_name == 'push'
-        run: python -m dealbot dump "갤럭시 버즈3 프로" "갤럭시 버즈4 프로" && git add -f debug/*.html
+        run: python -m dealbot dump "갤럭시 버즈3 프로" "갤럭시 버즈4 프로" > debug/log.txt 2>&1; git add -f debug
       - if: github.event_name != 'push'
         run: python -m dealbot action
         env:
