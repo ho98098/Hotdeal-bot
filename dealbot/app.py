@@ -166,7 +166,8 @@ class App:
 
     def run_once(self):
         n = self.check_boards() + self.check_watchlist()
-        self.store.set_meta("last_run", time.strftime("%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600))  # 한국 시간)
+        # 한국 시간으로 기록
+        self.store.set_meta("last_run", time.strftime("%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600)))
         if n:
             k = "alerts_" + time.strftime("%Y-%m-%d")
             self.store.set_meta(k, int(self.store.get_meta(k, 0)) + n)
