@@ -128,3 +128,12 @@ def test_serve_loop_saves_and_stops(tmp_path):
     saves = []
     app.serve(hours=0.0001, save=lambda: saves.append(1), save_every=0)
     assert saves  # 끝날 때 반드시 저장
+
+
+def test_category_commands(tmp_path):
+    app, tg = make(lambda q: [], tmp_path)
+    tg.queue = [{"update_id": i, "message": {"chat": {"id": 1}, "text": t}} for i, t in
+                enumerate(["/catadd 생활용품 세제", "/catdel 전자제품 갤럭시", "/category"])]
+    app.handle_commands()
+    assert app.categories() == {"생활용품": ["세제"]}   # 전자제품은 키워드가 비어 삭제됨
+    assert "[생활용품]" in tg.sent[-1]

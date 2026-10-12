@@ -1,4 +1,5 @@
 """한 번의 확인 주기(run_once)와 반복 실행."""
+import json
 import logging
 import time
 
@@ -14,6 +15,9 @@ HELP = (
     "/list - 관심 제품 목록\n"
     "/price 제품명 - 지금 다나와 시세 조회\n"
     "/status - 봇 상태와 최근 확인 결과\n"
+    "/category - 감시 카테고리와 키워드 보기\n"
+    "/catadd 카테고리 키워드 - 키워드 추가\n"
+    "/catdel 카테고리 키워드 - 키워드 삭제\n"
     "/check - 지금 바로 전체 확인"
 )
 
@@ -48,9 +52,30 @@ class App:
                 self.tg.send(f"삭제했어요: {arg}" if ok else f"목록에 없어요: {arg}")
             elif cmd == "/list":
                 rows = self.store.watch_list()
-                self.tg.send("관심 제품\n" + "\n".join(f"- {r[0]}" for r in rows) if rows else "등록된 관심 제품이 없어요.")
+                self.tg.send("관심 제품\n" + "\n".join(
+                    f"- {r[0]}" + (f" (알림 보낸 가격 {won(r[1])})" if r[1] else "") for r in rows)
+                    if rows else "등록된 관심 제품이 없어요. /add 제품명 으로 등록하세요.")
             elif cmd == "/price" and arg:
                 self.tg.send(self.price_report(arg))
+            elif cmd in ("/category", "/categories", "/카테고리"):
+                cats = self.categories()
+                self.tg.send("\n\n".join(f"[{c}]\n" + ", ".join(k) for c, k in cats.items()) or "카테고리가 없어요.")
+            elif cmd in ("/catadd", "/catdel") and len(arg.split()) >= 2:
+                cat, kw = arg.split(None, 1)
+                cats = self.categories()
+                kws = cats.setdefault(cat, [])
+                if cmd == "/catadd":
+                    if kw not in kws:
+                        kws.append(kw)
+                    msg = f"[{cat}] 에 '{kw}' 추가했어요."
+                else:
+                    msg = f"[{cat}] 에서 '{kw}' 삭제했어요." if kw in kws else f"[{cat}] 에 '{kw}' 가 없어요."
+                    if kw in kws:
+                        kws.remove(kw)
+                    if not kws:
+                        cats.pop(cat, None)
+                self.store.set_meta("categories", json.dumps(cats, ensure_ascii=False))
+                self.tg.send(msg)
             elif cmd == "/status":
                 self.tg.send(self.status_report())
             elif cmd == "/check":
@@ -95,9 +120,14 @@ class App:
                 f"오늘 보낸 특가 알림: {g('alerts_' + time.strftime('%Y-%m-%d'))}건\n"
                 f"관심 제품 {len(self.store.watch_list())}개, 확인 주기 {self.cfg.get('interval_minutes', 5)}분")
 
+    def categories(self):
+        """텔레그램으로 바꾼 카테고리가 있으면 그것을, 없으면 config.yaml 값을 사용."""
+        saved = self.store.get_meta("categories")
+        return json.loads(saved) if saved else {k: list(v) for k, v in self.cfg.get("categories", {}).items()}
+
     # ---------- 핫딜 게시판 ----------
     def check_boards(self):
-        cats = self.cfg.get("categories", {})
+        cats = self.categories()
         min_price = int(self.cfg.get("min_price", 0))
         sent = new = matched = compared = 0
         for src in self.cfg.get("sources", []):

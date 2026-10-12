@@ -8,7 +8,7 @@
 - `TELEGRAM_CHAT_ID` : 비워두면 봇에게 처음 /start 를 보낸 채팅이 자동으로 등록됩니다
 
 ## 텔레그램 명령
-`/add 제품명`, `/remove 제품명`, `/list`, `/price 제품명`, `/check`
+`/add 제품명`, `/remove 제품명`, `/list`, `/price 제품명`, `/status`, `/category`, `/catadd 카테고리 키워드`, `/catdel 카테고리 키워드`, `/check`
 
 ## 바꿀 수 있는 것
 `config.yaml`에서 카테고리 키워드, 할인 기준, 게시판 목록을 바꿀 수 있습니다.
