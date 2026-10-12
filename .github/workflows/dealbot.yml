@@ -1,0 +1,36 @@
+name: dealbot
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # 15분마다 (GitHub 사정으로 몇 분 늦을 수 있음)
+  workflow_dispatch:          # Actions 탭에서 수동 실행
+permissions:
+  contents: write
+concurrency:
+  group: dealbot
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m dealbot action
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      - name: 가격 기록 저장
+        if: always()
+        run: |
+          git config user.name "dealbot"
+          git config user.email "dealbot@users.noreply.github.com"
+          git add -f dealbot.db
+          git diff --cached --quiet || git commit -m "가격 기록 갱신 [skip ci]"
+          git pull --rebase -X theirs || true
+          git push || true
