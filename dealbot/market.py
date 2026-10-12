@@ -27,29 +27,33 @@ SKIP_LABELS = ("중고", "해외", "렌탈", "리퍼")
 ROW_RE = re.compile(r"([^|]{0,20})\|\s*([\d,]{4,})원\s*\|\s*\d+\s*\|\s*몰")
 
 
+def _pick(rows):
+    """rows: [(라벨, 가격)] -> (국내 최저가, 해외구매 최저가). 중고·렌탈·리퍼 제외."""
+    dom = [p for l, p in rows if p and not any(x in l for x in SKIP_LABELS)]
+    ovs = [p for l, p in rows if p and "해외" in l and not any(x in l for x in ("중고", "렌탈", "리퍼"))]
+    return (min(dom) if dom else 0), (min(ovs) if ovs else 0)
+
+
 def parse_danawa(html):
-    """다나와 검색 결과. 다나와가 예전 화면과 새 화면을 섞어서 보내므로 둘 다 처리."""
+    """다나와 검색 결과. 다나와가 예전 화면과 새 화면을 섞어서 보내므로 둘 다 처리.
+    price = 국내(정품) 최저가, overseas = 해외구매 최저가(없으면 0)"""
     soup = BeautifulSoup(html, "html.parser")
     out = []
-    # 예전 화면
+    # 예전 화면: li.prod_item 안의 가격 줄마다 '309,860 원 ... 1위 정품' 형태
     for li in soup.select("li.prod_item"):
         if not str(li.get("id", "")).startswith("productItem"):
             continue  # 광고 슬롯 제외
         a = li.select_one(".prod_name a")
         if not a:
             continue
-        price = 0
-        for sect in li.select(".price_sect"):
-            label = sect.get_text(" ", strip=True)
-            if any(x in label for x in SKIP_LABELS):
-                continue
-            strong = sect.select_one("strong")
-            price = _num(strong.get_text() if strong else "")
-            if price:
-                break
+        rows = []
+        for row in li.select(".prod_pricelist > ul > li") or li.select(".price_sect"):
+            strong = row.select_one(".price_sect strong") or row.select_one("strong")
+            rows.append((row.get_text(" ", strip=True), _num(strong.get_text() if strong else "")))
+        price, ovs = _pick(rows)
         if price:
-            out.append({"title": a.get_text(" ", strip=True), "price": price,
-                        "mall": "다나와 최저가", "link": a.get("href", "")})
+            out.append({"title": a.get_text(" ", strip=True), "price": price, "overseas": ovs,
+                        "mall": "다나와", "link": a.get("href", "")})
     if out:
         return out
     # 새 화면: 상품마다 div.flex.py-6, 가격은 '정품 | 219,530원 | 162 | 몰' 형태
@@ -61,13 +65,9 @@ def parse_danawa(html):
         name = BeautifulSoup(img["alt"], "html.parser").get_text().strip()
         text = d.get_text(" | ", strip=True)
         text = text[text.rfind("상품분류"):] if "상품분류" in text else text
-        price = 0
-        for label, num in ROW_RE.findall(text):
-            if not any(x in label for x in SKIP_LABELS):
-                price = int(num.replace(",", ""))
-                break
+        price, ovs = _pick([(l, int(n.replace(",", ""))) for l, n in ROW_RE.findall(text)])
         if price:
-            out.append({"title": name, "price": price, "mall": "다나와 최저가", "link": a.get("href", "")})
+            out.append({"title": name, "price": price, "overseas": ovs, "mall": "다나와", "link": a.get("href", "")})
     return out
 
 

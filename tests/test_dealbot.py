@@ -43,10 +43,10 @@ def test_real_danawa_pages():
     import pathlib
     d = pathlib.Path(__file__).parent / "fixtures"
     new = market.relevant(market.parse_danawa((d / "danawa_new.html").read_text("utf-8")), "갤럭시 버즈3 프로")
-    assert (new[0]["price"], "SM-R630N" in new[0]["title"]) == (219530, True)
+    assert (new[0]["price"], new[0]["overseas"], "SM-R630N" in new[0]["title"]) == (219530, 170465, True)
     q = market.clean_query("삼성 갤럭시 버즈4 프로 SM-R640 블루투스 무선 이어폰 (당일항공발송 관부가세포함)")
     old = market.relevant(market.parse_danawa((d / "danawa_old.html").read_text("utf-8")), q)
-    assert old[0]["price"] == 309860 and "SM-R640" in old[0]["title"]
+    assert (old[0]["price"], old[0]["overseas"]) == (309860, 209200) and "SM-R640" in old[0]["title"]
 
 
 DANAWA = """<ul><li class="prod_item prod_layer" id="productItem1">
@@ -95,6 +95,9 @@ def test_price_command_and_fail_notice(tmp_path):
     tg.queue = [{"update_id": 1, "message": {"chat": {"id": 1}, "text": "/price 갤럭시 버즈3 프로"}}]
     app.handle_commands()
     assert "200,000원" in tg.sent[0]
+    tg.queue = [{"update_id": 2, "message": {"chat": {"id": 1}, "text": "/status"}}]
+    app.handle_commands()
+    assert "마지막 확인" in tg.sent[-1]
     def boom(q): raise RuntimeError("blocked")
     app2, tg2 = make(boom, tmp_path / "..")
     app2.store.watch_add("갤럭시 버즈3 프로")
