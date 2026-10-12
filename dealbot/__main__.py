@@ -27,6 +27,38 @@ def load_config(path="config.yaml"):
     return cfg
 
 
+def _git(*args, inp=None):
+    import subprocess
+    r = subprocess.run(["git", *args], input=inp, capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def restore_db(path):
+    """data 브랜치에 저장된 최신 기록을 가져옴 (없으면 기존 파일 사용)."""
+    if _git("fetch", "-q", "origin", "data") is not None:
+        import subprocess
+        blob = subprocess.run(["git", "show", "FETCH_HEAD:dealbot.db"], capture_output=True)
+        if blob.returncode == 0 and blob.stdout:
+            open(path, "wb").write(blob.stdout)
+            logging.info("data 브랜치에서 기록 복원 (%d bytes)", len(blob.stdout))
+
+
+def save_db(store, path):
+    """열린 DB를 복사해 data 브랜치에 한 커밋으로 덮어씀 (작업 파일·main 브랜치는 건드리지 않음)."""
+    import sqlite3
+    import tempfile
+    tmp = os.path.join(tempfile.gettempdir(), "dealbot_snapshot.db")
+    dst = sqlite3.connect(tmp)
+    store.db.commit()
+    store.db.backup(dst)
+    dst.close()
+    blob = _git("hash-object", "-w", tmp)
+    tree = blob and _git("mktree", inp=f"100644 blob {blob}\tdealbot.db\n")
+    commit = tree and _git("commit-tree", tree, "-m", "가격 기록")
+    ok = commit and _git("push", "-q", "-f", "origin", f"{commit}:refs/heads/data") is not None
+    logging.info("기록 저장: %s", bool(ok))
+
+
 def claim_owner(tg, store):
     """chat_id 가 비어 있으면 봇에게 처음 /start 를 보낸 개인 채팅을 주인으로 등록."""
     owner = store.get_meta("owner_chat_id")
@@ -58,6 +90,8 @@ def main():
     if not cfg["telegram"].get("bot_token"):
         sys.exit("텔레그램 봇 토큰이 없습니다.")
     store_path = cfg.get("db_path", "dealbot.db")
+    if cmd in ("serve", "action") and os.environ.get("GITHUB_ACTIONS"):
+        restore_db(store_path)
     store = Store(store_path)
     tg = Telegram(cfg["telegram"]["bot_token"], cfg["telegram"].get("chat_id") or "")
     if not tg.chat_id:
@@ -71,17 +105,13 @@ def main():
     elif cmd == "once":
         print("알림", app.run_once(), "건")
     elif cmd == "serve":  # GitHub Actions 상시 실행
-        import subprocess
-
-        def save():
-            sh = lambda *a: subprocess.run(a, capture_output=True)
-            sh("git", "add", "-f", store_path)
-            if sh("git", "diff", "--cached", "--quiet").returncode:
-                sh("git", "commit", "-m", "가격 기록 갱신 [skip ci]")
-                sh("git", "pull", "--rebase", "-X", "theirs")
-                logging.info("기록 저장: %s", sh("git", "push").returncode == 0)
-
-        app.serve(hours=float(os.environ.get("SERVE_HOURS", 5.7)), save=save)
+        import signal
+        # 취소(새 실행으로 교체)될 때도 기록을 저장하고 끝나도록
+        signal.signal(signal.SIGTERM, lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+        try:
+            app.serve(hours=float(os.environ.get("SERVE_HOURS", 5.7)), save=lambda: save_db(store, store_path))
+        except KeyboardInterrupt:
+            logging.info("종료 요청으로 멈춤")
     elif cmd == "action":  # GitHub Actions: 명령 처리 + 한 번 확인 후 종료
         forced = app.handle_commands()
         n = app.run_once()

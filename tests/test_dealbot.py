@@ -97,7 +97,7 @@ def test_price_command_and_fail_notice(tmp_path):
     assert "200,000원" in tg.sent[0]
     tg.queue = [{"update_id": 2, "message": {"chat": {"id": 1}, "text": "/status"}}]
     app.handle_commands()
-    assert "마지막 확인" in tg.sent[-1]
+    assert "마지막 특가 확인" in tg.sent[-1]
     def boom(q): raise RuntimeError("blocked")
     app2, tg2 = make(boom, tmp_path / "..")
     app2.store.watch_add("갤럭시 버즈3 프로")

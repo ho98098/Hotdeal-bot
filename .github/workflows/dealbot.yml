@@ -1,27 +1,42 @@
 name: dealbot
-# 공개 저장소에서 상시 실행: 한 번 실행되면 약 5시간 40분 동안 켜져 있고,
-# 30분마다 예약된 다음 실행이 대기하다가 앞 실행이 끝나면 바로 이어받습니다.
+# 상시 실행. 한 번 실행되면 약 5시간 40분 동안 켜져 있습니다.
+# - 예약 실행(30분마다): 이미 돌고 있는 봇이 있으면 바로 끝내고, 없으면(멈췄거나 끝났으면) 새로 시작
+# - 수동 실행(Run workflow): 돌고 있는 봇을 멈추고 즉시 새로 시작
 on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
-concurrency:
-  group: dealbot
-  cancel-in-progress: false
+  actions: write
 jobs:
   run:
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - name: 다른 실행 확인
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          others=$(gh run list -w dealbot -s in_progress --json databaseId -q '.[].databaseId' | grep -vx "${{ github.run_id }}" || true)
+          if [ -n "$others" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "이미 실행 중인 봇이 있어 종료합니다."; echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          for id in $others; do gh run cancel "$id" || true; done
+          [ -n "$others" ] && sleep 20 || true   # 앞 실행이 기록을 저장할 시간
+      - if: steps.gate.outputs.skip != '1'
+        uses: actions/checkout@v5
+      - if: steps.gate.outputs.skip != '1'
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: |
+      - if: steps.gate.outputs.skip != '1'
+        run: pip install -r requirements.txt
+      - if: steps.gate.outputs.skip != '1'
+        run: |
           git config user.name "dealbot"
           git config user.email "dealbot@users.noreply.github.com"
           python -m dealbot serve

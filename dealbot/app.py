@@ -84,7 +84,22 @@ class App:
                 self.tg.send(HELP)
         return want_check
 
+    def tick(self):
+        """오래 걸리는 확인 도중에도 명령에 바로 답하도록 틈틈이 호출."""
+        if getattr(self, "_in_tick", False) or not getattr(self, "serving", False):
+            return
+        self._in_tick = True
+        try:
+            if self.handle_commands():
+                self._force = True
+        except Exception:
+            log.exception("명령 처리 오류")
+        finally:
+            self._in_tick = False
+        self.store.set_meta("heartbeat", time.time())
+
     def lookup(self, query):
+        self.tick()
         query = market.clean_query(query) or query
         try:
             items = market.relevant(self.search(query), query)
@@ -115,7 +130,9 @@ class App:
 
     def status_report(self):
         g = lambda k: self.store.get_meta(k, "-")
-        return (f"마지막 확인: {g('last_run')}\n"
+        hb = self.store.get_meta("heartbeat")
+        alive = f"{int(time.time() - float(hb))}초 전" if hb else "-"
+        return (f"봇 응답 확인: {alive}\n마지막 특가 확인: {g('last_run')}\n"
                 f"게시판 새 글 {g('last_new')}개 중 카테고리 해당 {g('last_matched')}개, 시세 비교 {g('last_compared')}개\n"
                 f"오늘 보낸 특가 알림: {g('alerts_' + time.strftime('%Y-%m-%d'))}건\n"
                 f"관심 제품 {len(self.store.watch_list())}개, 확인 주기 {self.cfg.get('interval_minutes', 5)}분")
@@ -214,9 +231,20 @@ class App:
         interval = float(self.cfg.get("interval_minutes", 5)) * 60
         end = time.time() + hours * 3600
         next_run = last_save = 0
+        self.serving, self._force = True, False
+        try:
+            self._serve_loop(end, interval, save, save_every)
+        finally:
+            if save:
+                save()
+
+    def _serve_loop(self, end, interval, save, save_every):
+        next_run = last_save = 0
         while time.time() < end:
             try:
-                force = self.handle_commands(wait=25)
+                self.store.set_meta("heartbeat", time.time())
+                force = self.handle_commands(wait=25) or self._force
+                self._force = False
                 if force or time.time() >= next_run:
                     n = self.run_once()
                     log.info("확인 완료, 알림 %d건", n)
@@ -227,10 +255,11 @@ class App:
                 log.exception("실행 중 오류")
                 time.sleep(10)
             if save and time.time() - last_save > save_every:
-                save()
+                try:
+                    save()
+                except Exception:
+                    log.exception("저장 오류")
                 last_save = time.time()
-        if save:
-            save()
 
     def run_forever(self):
         interval = float(self.cfg.get("interval_minutes", 10)) * 60
