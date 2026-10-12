@@ -23,24 +23,48 @@ def _num(text):
     return int(m.group().replace(",", "")) if m else 0
 
 
+SKIP_LABELS = ("중고", "해외", "렌탈", "리퍼")
+ROW_RE = re.compile(r"([^|]{0,20})\|\s*([\d,]{4,})원\s*\|\s*\d+\s*\|\s*몰")
+
+
 def parse_danawa(html):
+    """다나와 검색 결과. 다나와가 예전 화면과 새 화면을 섞어서 보내므로 둘 다 처리."""
     soup = BeautifulSoup(html, "html.parser")
     out = []
+    # 예전 화면
     for li in soup.select("li.prod_item"):
         if not str(li.get("id", "")).startswith("productItem"):
             continue  # 광고 슬롯 제외
         a = li.select_one(".prod_name a")
         if not a:
             continue
-        name = a.get_text(" ", strip=True)
         price = 0
         for sect in li.select(".price_sect"):
             label = sect.get_text(" ", strip=True)
-            if any(x in label for x in ("중고", "해외", "렌탈", "리퍼")):
+            if any(x in label for x in SKIP_LABELS):
                 continue
             strong = sect.select_one("strong")
             price = _num(strong.get_text() if strong else "")
             if price:
+                break
+        if price:
+            out.append({"title": a.get_text(" ", strip=True), "price": price,
+                        "mall": "다나와 최저가", "link": a.get("href", "")})
+    if out:
+        return out
+    # 새 화면: 상품마다 div.flex.py-6, 가격은 '정품 | 219,530원 | 162 | 몰' 형태
+    for d in soup.select("div.flex.py-6"):
+        a = d.find("a", href=re.compile(r"prod\.danawa\.com/info/\?pcode="))
+        img = d.find("img")
+        if not a or not img or not img.get("alt"):
+            continue
+        name = BeautifulSoup(img["alt"], "html.parser").get_text().strip()
+        text = d.get_text(" | ", strip=True)
+        text = text[text.rfind("상품분류"):] if "상품분류" in text else text
+        price = 0
+        for label, num in ROW_RE.findall(text):
+            if not any(x in label for x in SKIP_LABELS):
+                price = int(num.replace(",", ""))
                 break
         if price:
             out.append({"title": name, "price": price, "mall": "다나와 최저가", "link": a.get("href", "")})
@@ -53,35 +77,41 @@ def search(query, timeout=15):
     return parse_danawa(r.text)
 
 
+NOISE_RE = re.compile(r"\([^)]*\)|\[[^\]]*\]|당일\S*|무료\S*|무배|관부가세\S*|정품|국내|해외\S*|블루투스|공식\S*|특가|할인")
+MODEL_RE = re.compile(r"\b[A-Z]{1,5}-?[A-Z]?\d{2,}[A-Z0-9]*\b")
+
+
+def clean_query(name):
+    """핫딜 글 제목에서 검색에 방해되는 말(괄호, 배송·관세 문구 등)을 걷어냄."""
+    return re.sub(r"\s+", " ", NOISE_RE.sub(" ", name)).strip()
+
+
 def _tokens(s):
     return set(re.findall(r"[0-9a-zA-Z가-힣]+", s.lower()))
 
 
 def relevant(items, query, min_overlap=0.6):
-    """검색어 단어의 60% 이상이 상품명에 있고, 액세서리·중고가 아닌 항목만."""
+    """관련도 순으로 정렬해 반환. 액세서리·중고 제외, 모델명(SM-R640 등)이 있으면 일치 필수."""
     q = _tokens(query)
-    keep = []
-    for it in items:
+    models = [m.replace("-", "").lower() for m in MODEL_RE.findall(query)]
+    scored = []
+    for i, it in enumerate(items):
         if any(x in it["title"] and x not in query for x in EXCLUDE):
             continue
-        joined = it["title"].lower().replace(" ", "")
-        if not q or sum(1 for t in q if t in joined) / len(q) >= min_overlap:
-            keep.append(it)
-    return keep
+        joined = it["title"].lower().replace(" ", "").replace("-", "")
+        if models and not any(m in joined for m in models):
+            continue
+        score = sum(1 for t in q if t in joined) / len(q) if q else 1
+        if score >= min_overlap:
+            scored.append((-score, i, it))
+    return [it for _, _, it in sorted(scored, key=lambda x: (x[0], x[1]))]
 
 
 def market_price(items):
-    """시세 = 가장 관련 높은(첫) 상품의 다나와 최저가. 결과가 여러 개면 극단값 제외 중앙값과 비교해
-    첫 상품이 튀면 중앙값 사용. 반환: (시세, 대표 항목) 또는 (None, None)"""
+    """시세 = 가장 관련 높은 상품의 다나와 최저가. 반환: (시세, 그 항목) 또는 (None, None)"""
     if not items:
         return None, None
-    first = items[0]
-    if len(items) >= 3:
-        med = statistics.median(it["price"] for it in items)
-        if not (0.4 * med <= first["price"] <= 2.5 * med):
-            core = [it for it in items if 0.4 * med <= it["price"] <= 2.5 * med]
-            return int(statistics.median(it["price"] for it in core)), min(core, key=lambda x: x["price"])
-    return first["price"], first
+    return items[0]["price"], items[0]
 
 
 def discount(price, reference):

@@ -37,7 +37,7 @@ def claim_owner(tg, store):
         if chat.get("type") == "private":
             store.set_meta("owner_chat_id", chat["id"])
             tg.chat_id = str(chat["id"])
-            tg.send("연결됐어요! 이제 이 채팅으로 특가 알림을 보냅니다.\n\n" + HELP)
+            tg.send("연결됐어요! 이제 이 채팅으로 특가 알림을 보냅니다.")
             return str(chat["id"])
     return None
 

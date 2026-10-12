@@ -39,9 +39,14 @@ def test_parse_title():
     assert sources.parse_title("[쿠팡] 갤럭시 버즈3 (150,000원/무료) [3]") == ("쿠팡", "갤럭시 버즈3", 150000)
 
 
-def test_market_price_first_product():
-    assert market.market_price(items(200000, 210000, 190000))[0] == 200000
-    assert market.market_price(items(9900, 200000, 210000, 205000))[0] == 205000  # 튀는 첫 항목
+def test_real_danawa_pages():
+    import pathlib
+    d = pathlib.Path(__file__).parent / "fixtures"
+    new = market.relevant(market.parse_danawa((d / "danawa_new.html").read_text("utf-8")), "갤럭시 버즈3 프로")
+    assert (new[0]["price"], "SM-R630N" in new[0]["title"]) == (219530, True)
+    q = market.clean_query("삼성 갤럭시 버즈4 프로 SM-R640 블루투스 무선 이어폰 (당일항공발송 관부가세포함)")
+    old = market.relevant(market.parse_danawa((d / "danawa_old.html").read_text("utf-8")), q)
+    assert old[0]["price"] == 309860 and "SM-R640" in old[0]["title"]
 
 
 DANAWA = """<ul><li class="prod_item prod_layer" id="productItem1">

@@ -57,6 +57,7 @@ class App:
         return want_check
 
     def lookup(self, query):
+        query = market.clean_query(query) or query
         try:
             items = market.relevant(self.search(query), query)
             self.lookup_ok += 1
@@ -101,11 +102,12 @@ class App:
                 if not ref:
                     continue
                 off = market.discount(d.price, ref)
-                # 90% 넘게 싸면 다른 상품(부속품 등)과 비교됐을 가능성이 커서 제외
-                if self.threshold <= off < 0.9:
+                # 70% 넘게 싸면 다른 상품(부속품 등)과 비교됐을 가능성이 커서 제외
+                if self.threshold <= off < 0.7:
+                    _, top = market.market_price(items)
                     self.tg.send(
                         f"[{d.category}] 시세보다 {off:.0%} 저렴\n{d.name}\n"
-                        f"특가 {won(d.price)} / 시세 {won(ref)}\n"
+                        f"특가 {won(d.price)} / 다나와 {won(ref)}\n비교 상품: {top['title']}\n"
                         f"{d.mall or '-'} · {d.source}\n{d.link}"
                     )
                     sent += 1
@@ -124,7 +126,7 @@ class App:
             self.store.add_price(key, low["price"])
             ref = hist or now_med                       # 기록이 부족한 초반엔 현재 판매가 중앙값
             off = market.discount(low["price"], ref)
-            if self.threshold <= off < 0.9 and (last_alert is None or low["price"] < last_alert):
+            if self.threshold <= off < 0.7 and (last_alert is None or low["price"] < last_alert):
                 basis = "최근 30일 시세" if hist else "현재 다나와 최저가"
                 self.tg.send(
                     f"[관심 제품] {basis}보다 {off:.0%} 저렴\n{low['title']}\n"

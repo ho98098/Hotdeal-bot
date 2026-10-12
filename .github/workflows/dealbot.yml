@@ -2,8 +2,6 @@ name: dealbot
 on:
   schedule:
     - cron: "*/30 * * * *"   # 30분마다 (비공개 저장소 무료 한도 월 2,000분 이내) (GitHub 사정으로 몇 분 늦을 수 있음)
-  push:
-    paths: ["debug/request"]
   workflow_dispatch:          # Actions 탭에서 수동 실행
 permissions:
   contents: write
@@ -21,10 +19,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - if: github.event_name == 'push'
-        run: python -m dealbot dump "갤럭시 버즈3 프로" "갤럭시 버즈4 프로" > debug/log.txt 2>&1; git add -f debug
-      - if: github.event_name != 'push'
-        run: python -m dealbot action
+      - run: python -m dealbot action
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -33,7 +28,7 @@ jobs:
         run: |
           git config user.name "dealbot"
           git config user.email "dealbot@users.noreply.github.com"
-          git add -f dealbot.db debug || git add -f dealbot.db
+          git add -f dealbot.db
           git diff --cached --quiet || git commit -m "가격 기록 갱신 [skip ci]"
           git pull --rebase -X theirs || true
           git push || true
