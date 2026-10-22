@@ -11,6 +11,9 @@ UA = {"User-Agent": "Mozilla/5.0 (personal deal watcher)"}
 PRICE_RE = re.compile(r"(?<![만\d,.])(\d{1,3}(?:,\d{3})+|\d{4,})\s*원")
 MAN_RE = re.compile(r"(\d+(?:\.\d+)?)\s*만\s*(\d{1,4})?\s*원?")
 BARE_RE = re.compile(r"\(\s*(\d{1,3}(?:,\d{3})+)\s*/")
+# '98000+배송무료', '12,900/무배', '15900 무료배송' 처럼 '원' 없이 적은 가격 (외화 표기는 제외)
+SHIP_RE = re.compile(r"(?<![\d,.$€¥])(\d{1,3}(?:,\d{3})+|\d{4,})\s*(?:\+\s*|/\s*|\s)(?:배송|무료|무배|택배|와우|로켓)")
+FOREIGN_RE = re.compile(r"(\$|usd|jpy|eur|cny|€|¥|달러|엔|유로|위안|불)\s*$", re.I)
 ENTITY_RE = re.compile(rb"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)")
 MALL_RE = re.compile(r"^\s*\[([^\]]+)\]\s*")
 
@@ -46,8 +49,11 @@ def parse_price(text):
     if m:
         return int(float(m.group(1)) * 10000) + int(m.group(2) or 0)
     m = BARE_RE.search(text)  # '(11,900/무배)' 처럼 '원' 없이 적은 경우
-    if m:
+    if m and not FOREIGN_RE.search(text[:m.start(1)]):
         return int(m.group(1).replace(",", ""))
+    for m in SHIP_RE.finditer(text):
+        if not FOREIGN_RE.search(text[:m.start(1)]):
+            return int(m.group(1).replace(",", ""))
     return 0
 
 

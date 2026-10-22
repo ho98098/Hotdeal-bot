@@ -184,28 +184,30 @@ class App:
             names = [r[0] for r in self.store.watch_list()]
             return "관심 제품 이름을 적어 주세요.\n" + "\n".join(f"- {n}" for n in names) if names \
                 else "등록된 관심 제품이 없어요. /add 제품명 으로 등록하세요."
-        rows = self.store.price_series(f"watch:{name}")
+        key = f"watch:{name}"
+        rows = self.store.price_series(key)
         if not rows:
             return f"'{name}' 은 아직 가격 기록이 없어요. 다음 확인 뒤에 다시 보세요."
         kst = lambda ts: time.gmtime(ts + 9 * 3600)
         now = time.time()
         cur = rows[-1][1]
-        lo_ts, lo = min(rows, key=lambda r: r[1])
-        lines = [f"[{name}] 가격 추이", f"지금 {won(cur)}",
-                 f"등록 후 최저 {won(lo)} ({time.strftime('%m-%d', kst(lo_ts))}) · 기록 {(now - rows[0][0]) / 86400:.0f}일"]
+        lo_ts, lo = min(rows, key=lambda r: (r[1], -r[0]))
+        lines = [f"[{name}] 가격 추이", f"지금 {won(cur)} ({time.strftime('%m-%d %H:%M', kst(rows[-1][0]))}부터)",
+                 f"등록 후 최저 {won(lo)} ({time.strftime('%m-%d', kst(lo_ts))}) · 기록 {(now - rows[0][0]) / 86400:.0f}일 · 가격 변동 {len(rows) - 1}번"]
         for days in (7, 30):
-            ps = [p for t, p in rows if t >= now - days * 86400]
+            ps = [p for _, _, p in self.store.price_periods(key, now - days * 86400, now)]
             if ps:
                 lines.append(f"최근 {days}일 최저 {won(min(ps))} / 최고 {won(max(ps))}")
-        daily = {}
-        for t, p in rows:
-            d = time.strftime("%m-%d", kst(t))
-            daily[d] = min(p, daily.get(d, p))
-        days = list(daily.items())[-7:]
-        if len(days) > 1:
-            lo7, hi7 = min(v for _, v in days), max(v for _, v in days)
+        daily = []
+        for k in range(6, -1, -1):  # 최근 7일, 그날 유지된 가격 중 최저
+            day0 = (int((now + 9 * 3600) // 86400) - k) * 86400 - 9 * 3600
+            ps = [p for s0, e0, p in self.store.price_periods(key) if s0 < day0 + 86400 and e0 > day0]
+            if ps:
+                daily.append((time.strftime("%m-%d", kst(day0)), min(ps)))
+        if len(daily) > 1:
+            lo7, hi7 = min(v for _, v in daily), max(v for _, v in daily)
             lines += ["", "일별 최저가"]
-            for d, v in days:
+            for d, v in daily:
                 bar = "▇" * (1 + int(7 * (v - lo7) / (hi7 - lo7))) if hi7 > lo7 else "▇"
                 lines.append(f"{d} {bar} {won(v)}")
         return "\n".join(lines)
@@ -238,8 +240,13 @@ class App:
         recent = [r for r in json.loads(self.store.get_meta("recent_alerts") or "[]") if time.time() - r["ts"] < 86400]
         toks = market._tokens(market.clean_query(name) or name)
         for r in recent:
-            same_price = (not price and not r["price"]) or (price and r["price"] and abs(price - r["price"]) <= 0.03 * r["price"])
+            # 가격이 같거나 3% 이내로 비싸면 같은 특가 (더 싸면 새로 알림)
+            same_price = (not price and not r["price"]) or (price and r["price"] and r["price"] <= price <= 1.03 * r["price"])
             overlap = len(toks & set(r["toks"])) / max(1, min(len(toks), len(r["toks"])))
+            cheaper = price and r["price"] and price < r["price"]
+            if overlap >= 0.7 and cheaper:
+                r["toks"] = []          # 더 싼 새 특가로 대체: 이전 기록은 비교 대상에서 제외
+                continue
             if same_price and overlap >= 0.7:
                 if source not in r["sources"]:
                     r["sources"].append(source)
@@ -409,6 +416,13 @@ class App:
         end = time.time() + hours * 3600
         next_run = last_save = 0
         self.serving, self._force = True, False
+        hb = self.store.get_meta("heartbeat")
+        gap = time.time() - float(hb) if hb else 0
+        if gap > float(self.cfg.get("stall_minutes", 40)) * 60:
+            kst = time.strftime("%m-%d %H:%M", time.gmtime(float(hb) + 9 * 3600))
+            self.tg.send(f"봇이 {gap / 60:.0f}분 동안 멈춰 있다가 다시 시작했어요. (마지막 응답 {kst})\n"
+                         f"그 사이 올라온 글은 지금부터 확인합니다.")
+        self.store.set_meta("heartbeat", time.time())
         try:
             self.tg.set_commands(COMMANDS)
         except Exception:

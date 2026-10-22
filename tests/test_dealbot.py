@@ -88,8 +88,9 @@ def test_watchlist_uses_history_and_dedupes(tmp_path):
     price = {"low": 100000}
     app, tg = make(lambda q: items(price["low"], 101000, 102000, title=q), tmp_path)
     app.store.watch_add("갤럭시 버즈3 프로")
-    for i in range(6):
+    for i in range(5, -1, -1):              # 5일 전부터 같은 가격 -> 기록은 1건만
         app.store.add_price("watch:갤럭시 버즈3 프로", 100000, time.time() - i * 86400)
+    assert len(app.store.price_series("watch:갤럭시 버즈3 프로")) == 1
     assert app.check_watchlist() == 0       # 평소 가격
     price["low"] = 80000
     assert app.check_watchlist() == 1 and "최근 30일" in tg.sent[0]
@@ -283,3 +284,55 @@ def test_add_shows_current_price_and_menu(tmp_path):
     assert len(app.store.price_series("watch:갤럭시 버즈3 프로")) == 1
     app.serve(hours=0.00001)
     assert ("block", "제외 키워드 추가 (예: /block 렌탈)") in tg.commands
+
+
+
+@pytest.mark.parametrize("t,exp", [
+    ("[지마켓] 파이어엠블렘 만자천홍 98000+배송무료", 98000),
+    ("[쿠팡] 라면 40봉 12,900/무배", 12900),
+    ("[11번가] 생수 2L 24병 15900 무료배송", 15900),
+    ("[Amazon.jp] DDR5 32GB (jpy 64980 / 무배,직배)", 0),
+    ("[이베이] 노트북 (600$/배대지)", 0),
+    ("DDR5 6000MHz 32GB", 0),
+])
+def test_price_without_won(t, exp):
+    assert sources.parse_price(t) == exp
+
+
+def test_dedupe_cheaper_realerts(tmp_path):
+    app, tg = make(lambda q: [], tmp_path)
+    assert app.notify("A", "삼성 갤럭시 버즈3 프로", 150000, "뽐뿌")
+    assert not app.notify("B", "갤럭시 버즈3 프로", 152000, "루리웹")   # 3% 이내 비쌈 -> 묶음
+    assert app.notify("C", "갤럭시 버즈3 프로", 149000, "클리앙")       # 더 쌈 -> 새 알림
+    assert not app.notify("D", "갤럭시 버즈3 프로", 149000, "뽐뿌")     # 새 최저와 같음 -> 묶음
+    assert tg.sent[0].startswith("A") and "같은 특가: 루리웹" in tg.sent[0] and tg.sent[1].startswith("C")
+
+
+def test_change_only_records_and_compact(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "c.db")
+    st = Store(path)
+    for i, p in enumerate([100, 100, 100, 90, 90, 100]):   # 예전 방식으로 쌓인 기록 흉내
+        st.db.execute("INSERT INTO prices VALUES(?,?,?)", ("k", p, 1000 + i))
+    st.db.commit()
+    st2 = Store(path)                                       # 다시 열면 정리
+    assert [p for _, p in st2.price_series("k")] == [100, 90, 100]
+    assert st2.add_price("k", 100) is False and st2.add_price("k", 95) is True
+
+
+def test_time_weighted_median(tmp_path):
+    st = Store(str(tmp_path / "m.db"))
+    now = time.time()
+    st.add_price("k", 100000, now - 10 * 86400)   # 9일 동안 100,000
+    st.add_price("k", 50000, now - 1 * 86400)     # 하루 동안 50,000
+    assert st.history_median("k") == 100000        # 기록 개수가 아니라 유지된 시간 기준
+
+
+def test_stall_notice(tmp_path):
+    app, tg = make(lambda q: [], tmp_path)
+    app.store.set_meta("heartbeat", time.time() - 3 * 3600)
+    app.serve(hours=0.00001)
+    assert "180분 동안 멈춰" in tg.sent[0]
+    tg.sent.clear()
+    app.serve(hours=0.00001)                       # 바로 다시 시작하면 알림 없음
+    assert not any("멈춰" in t for t in tg.sent)
