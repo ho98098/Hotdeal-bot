@@ -423,3 +423,17 @@ def test_pinned_pick_matches_same_product_across_sites(tmp_path):
            {"title": "노브랜드 3겹 화장지 33m 24롤", "price": 7000, "mall": "다나와", "link": "d/8"},
            {"title": "노브랜드 3겹 화장지 33m 30롤", "price": 10050, "mall": "에누리", "link": "e/1"}]
     assert app.pinned_pick(pin, its)["price"] == 9900   # 24롤은 다른 상품
+
+
+
+def test_category_excludes_appliances(tmp_path):
+    cats = {"전자제품": ["노트북"], "식품": ["김치", "커피", "음료", "쌀"]}
+    m = lambda t: sources.match_category(t, cats)
+    assert m("[하이마트] 삼성 비스포크 김치냉장고 490L") == ""
+    assert m("[쿠팡] 드롱기 전자동 커피머신") == ""
+    assert m("[G마켓] 종가 포기김치 5kg") == "식품"
+    assert m("[11번가] 맥심 커피믹스 180T") == "식품"
+    app, tg = make(lambda q: [], tmp_path)
+    tg.queue = [{"update_id": 1, "message": {"chat": {"id": 1}, "text": "/catex 식품 쌀국수"}}]
+    app.handle_commands()
+    assert sources.match_category("쌀국수 밀키트", cats, app.cat_excludes()) == ""

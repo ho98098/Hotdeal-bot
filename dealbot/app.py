@@ -20,6 +20,7 @@ COMMANDS = [
     ("category", "감시 카테고리와 키워드 보기"),
     ("catadd", "카테고리 키워드 추가 (예: /catadd 식품 라면)"),
     ("catdel", "카테고리 키워드 삭제"),
+    ("catex", "카테고리 제외 단어 (예: /catex 식품 냉장고)"),
     ("status", "봇 상태와 최근 확인 결과"),
     ("check", "지금 바로 전체 확인"),
     ("help", "명령어 목록"),
@@ -38,6 +39,7 @@ HELP = (
     "/category - 감시 카테고리와 키워드 보기\n"
     "/catadd 카테고리 키워드 - 키워드 추가\n"
     "/catdel 카테고리 키워드 - 키워드 삭제\n"
+    "/catex 카테고리 단어 - 이 단어가 있으면 그 카테고리로 안 봄\n"
     "/check - 지금 바로 전체 확인"
 )
 
@@ -122,6 +124,13 @@ class App:
                         cats.pop(cat, None)
                 self.store.set_meta("categories", json.dumps(cats, ensure_ascii=False))
                 self.tg.send(msg)
+            elif cmd == "/catex" and len(arg.split()) >= 2:
+                cat, kw = arg.split(None, 1)
+                saved = json.loads(self.store.get_meta("cat_exclude") or "{}")
+                if kw not in saved.setdefault(cat, []):
+                    saved[cat].append(kw)
+                self.store.set_meta("cat_exclude", json.dumps(saved, ensure_ascii=False))
+                self.tg.send(f"'{kw}' 이 들어간 글은 [{cat}] 으로 보지 않아요.")
             elif cmd == "/status":
                 self.tg.send(self.status_report())
             elif cmd == "/check":
@@ -324,6 +333,16 @@ class App:
                 f"오늘 보낸 특가 알림: {g('alerts_' + time.strftime('%Y-%m-%d'))}건\n"
                 f"관심 제품 {len(self.store.watch_list())}개, 확인 주기 {self.cfg.get('interval_minutes', 5)}분")
 
+    def cat_excludes(self):
+        """카테고리별 제외 단어: 기본값 + config.yaml 의 category_exclude + /catex 로 추가한 것."""
+        ex = {k: list(v) for k, v in sources.DEFAULT_EXCLUDE.items()}
+        extra = dict(self.cfg.get("category_exclude") or {})
+        for k, v in json.loads(self.store.get_meta("cat_exclude") or "{}").items():
+            extra.setdefault(k, []).extend(v)
+        for k, v in extra.items():
+            ex.setdefault(k, []).extend(x for x in v if x not in ex.get(k, []))
+        return ex
+
     def categories(self):
         """텔레그램으로 바꾼 카테고리가 있으면 그것을, 없으면 config.yaml 값을 사용."""
         saved = self.store.get_meta("categories")
@@ -353,7 +372,7 @@ class App:
                 new += 1
                 if d.ended or self.is_blocked(d.title):
                     continue
-                d.category = sources.match_category(d.title, cats)
+                d.category = sources.match_category(d.title, cats, self.cat_excludes())
                 if not d.category or (d.price and d.price < min_price):
                     continue
                 matched += 1

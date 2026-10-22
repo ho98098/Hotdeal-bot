@@ -154,9 +154,23 @@ def fetch_source(src, timeout=15):
     return parse_rss(r.content, src["name"])
 
 
-def match_category(title, categories):
+# 키워드가 다른 단어 속에 들어가 잘못 분류되는 것 방지 (예: '김치냉장고' 의 '김치')
+DEFAULT_EXCLUDE = {
+    "식품": ["냉장고", "냉동고", "세탁기", "건조기", "에어컨", "정수기", "밥솥", "전자레인지", "오븐", "에어프라이어",
+           "믹서", "블렌더", "커피머신", "커피메이커", "그라인더", "포트", "청소기", "식기세척기", "인덕션", "가스레인지",
+           "제습기", "가습기", "냉온수기", "디스펜서", "보관함", "밀폐용기", "쌀통", "찜기", "텀블러", "머그", "컵",
+           "케이스", "필름", "충전기", "노트북", "모니터", "의자", "책상", "가방", "신발", "자켓", "패딩"],
+    "생활용품": ["홀더", "디스펜서", "거치대", "케이스"],
+}
+
+
+def match_category(title, categories, excludes=None):
     low = title.lower()
+    excludes = DEFAULT_EXCLUDE if excludes is None else excludes
     for cat, keywords in categories.items():
-        if any(k.lower() in low for k in keywords):
-            return cat
+        if not any(k.lower() in low for k in keywords):
+            continue
+        if any(x.lower() in low for x in excludes.get(cat, [])):
+            continue  # 이 카테고리 제외 단어가 있으면 다음 카테고리 확인
+        return cat
     return ""
