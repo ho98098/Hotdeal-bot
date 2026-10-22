@@ -8,10 +8,16 @@
 - `TELEGRAM_CHAT_ID` : 비워두면 봇에게 처음 /start 를 보낸 채팅이 자동으로 등록됩니다
 
 ## 텔레그램 명령
-`/add 제품명`, `/remove 제품명`, `/list`, `/price 제품명`, `/status`, `/category`, `/catadd 카테고리 키워드`, `/catdel 카테고리 키워드`, `/check`
+`/add 제품명`, `/remove 제품명`, `/list`, `/history 제품명`, `/price 제품명`, `/status`, `/category`, `/catadd 카테고리 키워드`, `/catdel 카테고리 키워드`, `/check`
 
 ## 바꿀 수 있는 것
 `config.yaml`에서 카테고리 키워드, 할인 기준, 게시판 목록을 바꿀 수 있습니다.
 확인 주기는 `.github/workflows/dealbot.yml`의 cron에서 바꿉니다.
 
 참고: 네이버 쇼핑 검색 API는 2026-07-31 종료되어 다나와 검색 결과를 사용합니다.
+
+## 알림 종류
+- 카테고리 특가: 다나와·에누리 최저가보다 15% 이상 싸면 (수량이 다르면 환산해서 비교)
+- 시세 비교 불가: 카테고리에 맞지만 가격비교 사이트에 없는 특가 (`notify_unmatched`)
+- 인기 핫딜: 루리웹 추천 20 이상, 클리앙 추천 15 이상 (`popular`)
+- 관심 제품: 30일 시세보다 15% 이상 싸거나 등록 후 최저가를 갱신하면

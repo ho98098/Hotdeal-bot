@@ -25,6 +25,8 @@ class Deal:
     price: int      # 못 찾으면 0
     link: str
     category: str = ""
+    votes: int = 0
+    comments: int = 0
 
 
 def parse_price(text):
@@ -82,7 +84,39 @@ def parse_clien(html_text, source="클리앙"):
         title = a.get_text(" ", strip=True)
         link = "https://www.clien.net" + a.get("href", "").split("?")[0]
         mall, name, price = parse_title(title)
-        deals.append(Deal(source, f"{source}:{row['data-board-sn']}", title, name, mall, price, link))
+        em = row.select_one(".list_symph em")
+        votes = int(em.get_text(strip=True) or 0) if em and em.get_text(strip=True).isdigit() else 0
+        comments = int(row.get("data-comment-count") or 0)
+        deals.append(Deal(source, f"{source}:{row['data-board-sn']}", title, name, mall, price, link,
+                          votes=votes, comments=comments))
+    return deals
+
+
+def parse_ruliweb(html_text, source="루리웹"):
+    """루리웹 핫딜 목록 화면 (추천·댓글 수 포함)."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_text, "html.parser")
+    deals = []
+    for row in soup.select("tr.table_body"):
+        if "notice" in row.get("class", []):
+            continue
+        a = row.select_one("a.subject_link")
+        if not a:
+            continue
+        link = a.get("href", "").split("?")[0]
+        m = re.search(r"/read/(\d+)", link)
+        if not m:
+            continue
+        reply = row.select_one(".num_reply")
+        if reply:
+            reply.extract()
+        title = a.get_text(" ", strip=True)
+        rec = row.select_one("td.recomd")
+        votes = int(rec.get_text(strip=True)) if rec and rec.get_text(strip=True).isdigit() else 0
+        comments = int(re.sub(r"\D", "", reply.get_text()) or 0) if reply else 0
+        mall, name, price = parse_title(title)
+        deals.append(Deal(source, f"{source}:{m.group(1)}", title, name, mall, price, link,
+                          votes=votes, comments=comments))
     return deals
 
 
@@ -96,6 +130,8 @@ def fetch_source(src, timeout=15):
     r.raise_for_status()
     if kind == "clien":
         return parse_clien(r.text, src["name"])
+    if kind == "ruliweb":
+        return parse_ruliweb(r.text, src["name"])
     return parse_rss(r.content, src["name"])
 
 

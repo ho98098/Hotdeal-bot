@@ -40,6 +40,13 @@ class Store:
             return None
         return int(statistics.median(r[0] for r in rows))
 
+    def price_series(self, key, days=None):
+        q, a = "SELECT ts, price FROM prices WHERE key=?", [key]
+        if days:
+            q += " AND ts>=?"
+            a.append(time.time() - days * 86400)
+        return self.db.execute(q + " ORDER BY ts", a).fetchall()
+
     # --- 관심 제품 ---
     def watch_add(self, name):
         self.db.execute("INSERT OR IGNORE INTO watch VALUES(?,NULL)", (name,))

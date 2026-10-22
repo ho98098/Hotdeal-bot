@@ -188,5 +188,62 @@ def market_price(items):
     return items[0]["price"], items[0]
 
 
+_UNIT = r"(kg|g|ml|l|m)(?![a-z])"
+_CNT = r"(봉|개입|개|롤|캔|입|팩|병|포|구|알|매|ea|p)(?![a-z])"
+SIZE_COUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*" + _UNIT + r"\s*(?:[x×*]\s*(\d+)\s*(?:" + _CNT + r")?|(\d+)\s*" + _CNT + r")", re.I)
+SIZE_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*" + _UNIT, re.I)
+COUNT_RE = re.compile(r"(?<![\d.])(\d+)\s*" + _CNT, re.I)
+MULT_RE = re.compile(r"[x×*]\s*(\d+)(?!\s*(?:kg|g|ml|l|m)(?![a-z]))", re.I)
+
+
+def _size(num, unit):
+    unit = unit.lower()
+    v = float(num)
+    return {"kg": ("g", v * 1000), "g": ("g", v), "l": ("ml", v * 1000), "ml": ("ml", v), "m": ("m", v)}[unit]
+
+
+def quantity(title):
+    """제목에서 총량을 추정. 예) '40g 12봉' -> {'g': 480, 'ea': 12}, '500g' -> {'g': 500}
+    'ea' 는 개수(봉·롤·캔 등). 모르면 빈 dict."""
+    t = title.replace(",", "")
+    out = {}
+    m = SIZE_COUNT_RE.search(t)
+    if m:
+        dim, v = _size(m.group(1), m.group(2))
+        n = int(m.group(3) or m.group(5))
+        out[dim] = v * n
+        out["ea"] = n
+    else:
+        m = SIZE_RE.search(t)
+        if m:
+            dim, v = _size(m.group(1), m.group(2))
+            out[dim] = v
+        n = 1
+        found = False
+        for c in COUNT_RE.finditer(t):
+            n *= int(c.group(1))
+            found = True
+        for c in MULT_RE.finditer(t):
+            n *= int(c.group(1))
+            found = True
+        if re.search(r"1\s*\+\s*1", t):
+            n *= 2
+            found = True
+        if found and n:
+            out["ea"] = n
+    return {k: v for k, v in out.items() if v}
+
+
+def qty_ratio(deal_title, item_title):
+    """특가 수량 / 비교 상품 수량. 같은 기준으로 비교할 수 없으면 None.
+    무게·부피·길이를 개수보다 우선."""
+    a, b = quantity(deal_title), quantity(item_title)
+    for dim in ("g", "ml", "m", "ea"):
+        if dim in a and dim in b:
+            r = a[dim] / b[dim]
+            return r if 0.1 <= r <= 10 else None
+    return None
+
+
 def discount(price, reference):
     return 0.0 if not reference else (reference - price) / reference

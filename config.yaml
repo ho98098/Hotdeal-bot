@@ -6,6 +6,19 @@ discount_threshold: 0.15    # 시세보다 15% 이상 싸면 알림
 min_price: 5000             # 이 금액 미만 상품은 무시
 request_delay_seconds: 2    # 사이트 요청 사이 간격 (차단 방지)
 
+notify_unmatched: true     # 시세를 못 찾은 특가도 카테고리에 맞으면 알림
+
+# 인기 핫딜: 추천 수가 기준 이상이면 카테고리·시세와 상관없이 알림
+popular:
+  - name: 루리웹
+    url: "https://bbs.ruliweb.com/market/board/1020"
+    type: ruliweb
+    min_votes: 20
+  - name: 클리앙
+    url: "https://www.clien.net/service/board/jirum"
+    type: clien
+    min_votes: 15
+
 # 감시할 카테고리: 제목에 키워드가 하나라도 들어 있으면 해당 카테고리로 봅니다.
 categories:
   전자제품:

@@ -162,3 +162,76 @@ def test_lookup_picks_cheapest_site(tmp_path):
     assert items[0]["mall"] == "에누리"
     rep = app.price_report("갤럭시 버즈3 프로")
     assert rep.index("[에누리]") < rep.index("[다나와]") and "해외구매 170,000원" in rep
+
+
+@pytest.mark.parametrize("t,exp", [
+    ("오즈랜드 두부과자 40g 12봉", {"g": 480, "ea": 12}),
+    ("다향 훈제오리슬라이스 200g x 10", {"g": 2000, "ea": 10}),
+    ("국내산 깻잎김치 500g", {"g": 500}),
+    ("깨끗한나라 3겹 30m 30롤", {"m": 900, "ea": 30}),
+    ("오리온 초코파이 96P 1872g(2박스)", {"g": 1872, "ea": 96}),
+    ("코카콜라 제로 355ml 24캔", {"ml": 8520, "ea": 24}),
+    ("엑스티어 알파 1.5L", {"ml": 1500}),
+    ("TEAMGROUP DDR5 32GB (16GBx2)", {"ea": 2}),
+    ("갤럭시 버즈3 프로 SM-R630N", {}),
+])
+def test_quantity(t, exp):
+    assert market.quantity(t) == exp
+
+
+def test_qty_ratio():
+    assert market.qty_ratio("두부과자 40g 12봉", "두부과자 40g 5봉") == 2.4
+    assert market.qty_ratio("깻잎김치 500g", "깻잎김치 1kg") == 0.5
+    assert market.qty_ratio("갤럭시 버즈3 프로", "갤럭시 버즈3 프로 SM-R630N") is None
+
+
+def test_boards_quantity_and_unmatched(tmp_path):
+    rss = """<rss><channel>
+<item><title>[G마켓] 두부과자 40g 12봉 (9,900원/무료)</title><link>http://x/a</link></item>
+<item><title>[카톡선물하기] 갤럭시 기프티콘 이벤트 (1,360원/무료)</title><link>http://x/b</link></item>
+</channel></rss>""".encode()
+    def search(q):
+        if "두부" in q:
+            return [{"title": "두부과자 40g 5봉", "price": 6000, "overseas": 0, "mall": "다나와", "link": "d"}]
+        return []
+    cfg = {"categories": {"식품": ["과자"], "전자": ["갤럭시"]}, "sources": [{"name": "뽐뿌", "url": "u"}],
+           "discount_threshold": 0.15, "request_delay_seconds": 0}
+    tg = FakeTG()
+    app = App(cfg, Store(str(tmp_path / "q.db")), tg, search_fn=search,
+              fetch_fn=lambda s: sources.parse_rss(rss, s["name"]))
+    assert app.check_boards() == 2
+    # 5봉 6,000원 -> 12봉 환산 14,400원, 9,900원은 31% 저렴
+    assert "31% 저렴" in tg.sent[0] and "14,400원" in tg.sent[0] and "2.4배" in tg.sent[0]
+    assert "시세 비교 불가" in tg.sent[1]
+
+
+def test_popular_real_pages(tmp_path):
+    import pathlib
+    d = pathlib.Path(__file__).parent / "fixtures"
+    ru = sources.parse_ruliweb((d / "ruliweb_list.html").read_text("utf-8"))
+    best = [x for x in ru if "멤버십 3개월" in x.title][0]
+    assert (best.votes, best.comments) == (39, 23) and best.link.endswith("/read/108246")
+    cl = sources.parse_clien((d / "clien.html").read_text("utf-8"))
+    assert any(x.votes > 0 for x in cl) and any(x.comments > 0 for x in cl)
+    cfg = {"popular": [{"name": "루리웹", "url": "u", "type": "ruliweb", "min_votes": 20}], "request_delay_seconds": 0}
+    tg = FakeTG()
+    pages = {"n": ru}
+    app = App(cfg, Store(str(tmp_path / "p.db")), tg, search_fn=lambda q: [], fetch_fn=lambda s: pages["n"])
+    assert app.check_popular() == 0                      # 처음엔 기존 인기글로 알림 폭탄 안 보냄
+    new = sources.Deal("루리웹", "루리웹:999", "[쿠팡] 새 인기 특가", "새 인기 특가", "쿠팡", 0, "http://r/999", votes=25, comments=9)
+    pages["n"] = ru + [new]
+    assert app.check_popular() == 1 and "추천 25" in tg.sent[0]
+    assert app.check_popular() == 0
+
+
+def test_watch_alltime_low_and_history(tmp_path):
+    price = {"v": 100000}
+    app, tg = make(lambda q: items(price["v"], title=q), tmp_path)
+    app.store.watch_add("갤럭시 버즈3 프로")
+    for i, p in enumerate([100000, 99000, 98000]):
+        app.store.add_price("watch:갤럭시 버즈3 프로", p, time.time() - (3 - i) * 86400)
+    price["v"] = 96000                                    # 이전 최저 98,000원보다 2% 낮음
+    assert app.check_watchlist() == 1 and "등록 후 최저가 갱신" in tg.sent[0]
+    assert app.check_watchlist() == 0                     # 같은 가격 재알림 없음
+    rep = app.history_report("버즈3")
+    assert "지금 96,000원" in rep and "등록 후 최저 96,000원" in rep and "일별 최저가" in rep
