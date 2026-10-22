@@ -14,7 +14,13 @@ RSS = """<?xml version="1.0" encoding="UTF-8"?><rss><channel>
 class FakeTG:
     chat_id = "1"
     def __init__(self): self.sent, self.queue = [], []
-    def send(self, t): self.sent.append(t)
+    def send(self, t):
+        self.sent.append(t)
+        return len(self.sent)
+    def edit(self, mid, t):
+        self.sent[mid - 1] = t
+        return True
+    def set_commands(self, c): self.commands = c
     def updates(self, offset=0, wait=0): return [u for u in self.queue if u["update_id"] >= offset]
 
 
@@ -237,3 +243,43 @@ def test_watch_alltime_low_and_history(tmp_path):
     assert app.check_watchlist() == 0                     # 같은 가격 재알림 없음
     rep = app.history_report("버즈3")
     assert "지금 96,000원" in rep and "등록 후 최저 96,000원" in rep and "일별 최저가" in rep
+
+
+def test_ruliweb_ended_and_title_ended():
+    import pathlib
+    ru = sources.parse_ruliweb((pathlib.Path(__file__).parent / "fixtures" / "ruliweb_list.html").read_text("utf-8"))
+    ended = [d for d in ru if d.ended]
+    assert ended and len(ended) < len(ru) / 2
+    assert sources.is_ended("[종료] [쿠팡] 라면 40봉") and sources.is_ended("[쿠팡] 라면 (품절)")
+    assert not sources.is_ended("[쿠팡] 종료 임박 라면")
+
+
+def test_dedupe_block_ended(tmp_path):
+    rss = lambda title, link: f"<rss><channel><item><title>{title}</title><link>{link}</link></item></channel></rss>".encode()
+    pages = {
+        "뽐뿌": rss("[G마켓] 삼성 갤럭시 버즈3 프로 (150,000원/무료)", "http://p/1"),
+        "루리웹": rss("[지마켓] 갤럭시 버즈3 프로 150,000원", "http://r/1")
+                 .replace(b"</channel>", rss("[쿠팡] 갤럭시 탭 렌탈 (9,900원)", "http://r/2")[14:-16] + b"</channel>"),
+        "클리앙": rss("[종료] [쿠팡] 갤럭시 워치 (99,000원)", "http://c/1"),
+    }
+    cfg = {"categories": {"전자": ["갤럭시"]}, "request_delay_seconds": 0, "discount_threshold": 0.15,
+           "sources": [{"name": n, "url": "u"} for n in pages]}
+    tg = FakeTG()
+    app = App(cfg, Store(str(tmp_path / "d.db")), tg,
+              search_fn=lambda q: items(200000, 210000, title=q) if "버즈" in q else [],
+              fetch_fn=lambda s: sources.parse_rss(pages[s["name"]], s["name"]))
+    tg.queue = [{"update_id": 1, "message": {"chat": {"id": 1}, "text": "/block 렌탈"}}]
+    app.handle_commands()
+    assert app.check_boards() == 1                     # 버즈3 1건만 (중복·렌탈·종료 제외)
+    alert = [t for t in tg.sent if "버즈3" in t]
+    assert len(alert) == 1 and "같은 특가: 루리웹" in alert[0]
+
+
+def test_add_shows_current_price_and_menu(tmp_path):
+    app, tg = make(lambda q: items(217990, title="삼성전자 " + q + " SM-R630N"), tmp_path)
+    tg.queue = [{"update_id": 1, "message": {"chat": {"id": 1}, "text": "/add 갤럭시 버즈3 프로"}}]
+    app.handle_commands()
+    assert "현재 최저가 217,990원" in tg.sent[0]
+    assert len(app.store.price_series("watch:갤럭시 버즈3 프로")) == 1
+    app.serve(hours=0.00001)
+    assert ("block", "제외 키워드 추가 (예: /block 렌탈)") in tg.commands

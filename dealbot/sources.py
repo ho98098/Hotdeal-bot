@@ -27,6 +27,14 @@ class Deal:
     category: str = ""
     votes: int = 0
     comments: int = 0
+    ended: bool = False
+
+
+ENDED_RE = re.compile(r"[\[(【]\s*(종료|품절|마감|끝)\s*[\])】]|^\s*(종료|품절)\b|딜\s*종료|품절됨")
+
+
+def is_ended(title):
+    return bool(ENDED_RE.search(title))
 
 
 def parse_price(text):
@@ -68,7 +76,7 @@ def parse_rss(xml_bytes, source):
         if not title or not link:
             continue
         mall, name, price = parse_title(title)
-        deals.append(Deal(source, f"{source}:{link}", title, name, mall, price, link))
+        deals.append(Deal(source, f"{source}:{link}", title, name, mall, price, link, ended=is_ended(title)))
     return deals
 
 
@@ -88,7 +96,7 @@ def parse_clien(html_text, source="클리앙"):
         votes = int(em.get_text(strip=True) or 0) if em and em.get_text(strip=True).isdigit() else 0
         comments = int(row.get("data-comment-count") or 0)
         deals.append(Deal(source, f"{source}:{row['data-board-sn']}", title, name, mall, price, link,
-                          votes=votes, comments=comments))
+                          votes=votes, comments=comments, ended=is_ended(title)))
     return deals
 
 
@@ -107,6 +115,8 @@ def parse_ruliweb(html_text, source="루리웹"):
         m = re.search(r"/read/(\d+)", link)
         if not m:
             continue
+        subj = row.select_one("td.subject")
+        ended = bool(subj and "[종료]" in subj.get_text(" ", strip=True))
         reply = row.select_one(".num_reply")
         if reply:
             reply.extract()
@@ -116,7 +126,7 @@ def parse_ruliweb(html_text, source="루리웹"):
         comments = int(re.sub(r"\D", "", reply.get_text()) or 0) if reply else 0
         mall, name, price = parse_title(title)
         deals.append(Deal(source, f"{source}:{m.group(1)}", title, name, mall, price, link,
-                          votes=votes, comments=comments))
+                          votes=votes, comments=comments, ended=ended or is_ended(title)))
     return deals
 
 

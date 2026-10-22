@@ -8,12 +8,31 @@ from . import market, sources
 log = logging.getLogger("dealbot")
 won = lambda n: f"{n:,}원"
 
+COMMANDS = [
+    ("add", "관심 제품 등록 (예: /add 갤럭시 버즈3 프로)"),
+    ("remove", "관심 제품 삭제"),
+    ("list", "관심 제품 목록"),
+    ("history", "관심 제품 가격 추이"),
+    ("price", "지금 다나와·에누리 최저가 조회"),
+    ("block", "제외 키워드 추가 (예: /block 렌탈)"),
+    ("unblock", "제외 키워드 삭제"),
+    ("blocklist", "제외 키워드 목록"),
+    ("category", "감시 카테고리와 키워드 보기"),
+    ("catadd", "카테고리 키워드 추가 (예: /catadd 식품 라면)"),
+    ("catdel", "카테고리 키워드 삭제"),
+    ("status", "봇 상태와 최근 확인 결과"),
+    ("check", "지금 바로 전체 확인"),
+    ("help", "명령어 목록"),
+]
+
 HELP = (
     "명령어\n"
     "/add 제품명 - 관심 제품 등록\n"
     "/remove 제품명 - 관심 제품 삭제\n"
     "/list - 관심 제품 목록\n"
     "/history 제품명 - 관심 제품 가격 추이\n"
+    "/block 단어 - 이 단어가 든 글은 알림 안 함\n"
+    "/unblock 단어 · /blocklist - 제외 키워드 관리\n"
     "/price 제품명 - 지금 다나와·에누리 시세 조회\n"
     "/status - 봇 상태와 최근 확인 결과\n"
     "/category - 감시 카테고리와 키워드 보기\n"
@@ -47,7 +66,7 @@ class App:
             cmd, arg = cmd.split("@")[0].lower(), arg.strip()
             if cmd == "/add" and arg:
                 self.store.watch_add(arg)
-                self.tg.send(f"등록했어요: {arg}\n다음 확인부터 시세를 비교합니다.")
+                self.tg.send(self.add_report(arg))
             elif cmd == "/remove" and arg:
                 ok = self.store.watch_remove(arg)
                 self.tg.send(f"삭제했어요: {arg}" if ok else f"목록에 없어요: {arg}")
@@ -56,6 +75,22 @@ class App:
                 self.tg.send("관심 제품\n" + "\n".join(
                     f"- {r[0]}" + (f" (알림 보낸 가격 {won(r[1])})" if r[1] else "") for r in rows)
                     if rows else "등록된 관심 제품이 없어요. /add 제품명 으로 등록하세요.")
+            elif cmd == "/block" and arg:
+                bl = self.blocked()
+                if arg not in bl:
+                    bl.append(arg)
+                self.store.set_meta("blocked", json.dumps(bl, ensure_ascii=False))
+                self.tg.send(f"'{arg}' 이 들어간 글은 앞으로 알리지 않아요.\n제외 키워드: {', '.join(bl)}")
+            elif cmd == "/unblock" and arg:
+                bl = self.blocked()
+                ok = arg in bl
+                if ok:
+                    bl.remove(arg)
+                self.store.set_meta("blocked", json.dumps(bl, ensure_ascii=False))
+                self.tg.send(f"'{arg}' 제외를 풀었어요." if ok else f"제외 목록에 '{arg}' 가 없어요.")
+            elif cmd == "/blocklist":
+                bl = self.blocked()
+                self.tg.send("제외 키워드: " + ", ".join(bl) if bl else "제외 키워드가 없어요. /block 단어 로 추가하세요.")
             elif cmd == "/history":
                 self.tg.send(self.history_report(arg))
             elif cmd == "/price" and arg:
@@ -175,6 +210,49 @@ class App:
                 lines.append(f"{d} {bar} {won(v)}")
         return "\n".join(lines)
 
+    def add_report(self, name):
+        """관심 제품 등록 직후 지금 찾은 상품과 가격을 보여주고 첫 기록으로 저장."""
+        items = self.lookup(name)
+        if items is None:
+            return f"등록했어요: {name}\n지금은 시세 조회에 실패해서, 다음 확인 때 다시 찾아볼게요."
+        if not items:
+            return (f"등록했어요: {name}\n다만 다나와·에누리에서 맞는 상품을 못 찾았어요. "
+                    f"모델명을 더 정확히 적어 다시 등록해 주세요. (/remove {name})")
+        top = items[0]
+        self.store.add_price(f"watch:{name}", top["price"])
+        return (f"등록했어요: {name}\n지금 이 상품으로 비교합니다\n"
+                f"[{top['mall']}] {top['title']}\n현재 최저가 {won(top['price'])}\n{top['link']}\n"
+                f"엉뚱한 상품이면 /remove {name} 후 모델명을 넣어 다시 등록하세요.")
+
+    def blocked(self):
+        return json.loads(self.store.get_meta("blocked") or "[]")
+
+    def is_blocked(self, title):
+        low = title.lower()
+        return any(w.lower() in low for w in self.blocked())
+
+    # ---------- 같은 특가 묶기 ----------
+    def notify(self, text, name, price, source):
+        """최근 24시간 안에 같은 특가(이름이 비슷하고 가격이 같음)를 보냈으면 새로 보내지 않고
+        기존 메시지에 출처만 덧붙임. 새로 보냈으면 True."""
+        recent = [r for r in json.loads(self.store.get_meta("recent_alerts") or "[]") if time.time() - r["ts"] < 86400]
+        toks = market._tokens(market.clean_query(name) or name)
+        for r in recent:
+            same_price = (not price and not r["price"]) or (price and r["price"] and abs(price - r["price"]) <= 0.03 * r["price"])
+            overlap = len(toks & set(r["toks"])) / max(1, min(len(toks), len(r["toks"])))
+            if same_price and overlap >= 0.7:
+                if source not in r["sources"]:
+                    r["sources"].append(source)
+                    if r.get("msg_id"):
+                        self.tg.edit(r["msg_id"], r["text"] + "\n(같은 특가: " + ", ".join(r["sources"][1:]) + ")")
+                self.store.set_meta("recent_alerts", json.dumps(recent, ensure_ascii=False))
+                return False
+        msg_id = self.tg.send(text)
+        recent.append({"ts": time.time(), "toks": sorted(toks), "price": price, "msg_id": msg_id,
+                       "text": text, "sources": [source]})
+        self.store.set_meta("recent_alerts", json.dumps(recent[-200:], ensure_ascii=False))
+        return True
+
     def status_report(self):
         g = lambda k: self.store.get_meta(k, "-")
         hb = self.store.get_meta("heartbeat")
@@ -205,6 +283,8 @@ class App:
                     continue
                 self.store.mark_seen(d.id)
                 new += 1
+                if d.ended or self.is_blocked(d.title):
+                    continue
                 d.category = sources.match_category(d.title, cats)
                 if not d.category or (d.price and d.price < min_price):
                     continue
@@ -214,11 +294,10 @@ class App:
                 if not ref:
                     # 가격비교 사이트에 없는 특가(기프티콘·앱 쿠폰 등)도 카테고리에 맞으면 알림
                     if self.cfg.get("notify_unmatched", True):
-                        self.tg.send(
+                        sent += self.notify(
                             f"[{d.category}] 새 핫딜 (시세 비교 불가)\n{d.name}\n"
                             + (f"특가 {won(d.price)}\n" if d.price else "")
-                            + f"{d.mall or '-'} · {d.source}\n{d.link}")
-                        sent += 1
+                            + f"{d.mall or '-'} · {d.source}\n{d.link}", d.name, d.price, d.source)
                     continue
                 compared += 1
                 # 수량이 다르면 특가 수량 기준으로 시세 환산 (예: 12봉 vs 5봉)
@@ -238,12 +317,10 @@ class App:
                 off = market.discount(d.price, ref)
                 # 70% 넘게 싸면 다른 상품(부속품 등)과 비교됐을 가능성이 커서 제외
                 if self.threshold <= off < 0.7:
-                    self.tg.send(
+                    sent += self.notify(
                         f"[{d.category}] 시세보다 {off:.0%} 저렴\n{d.name}\n"
                         f"특가 {won(d.price)} / {top['mall']} {basis} 최저 {won(ref)}\n비교 상품: {top['title']}{qnote}\n"
-                        f"{d.mall or '-'} · {d.source}\n{d.link}"
-                    )
-                    sent += 1
+                        f"{d.mall or '-'} · {d.source}\n{d.link}", d.name, d.price, d.source)
             time.sleep(self.delay)
         if new:  # 첫 실행 등으로 새 글이 없으면 직전 통계 유지
             for k, v in (("last_new", new), ("last_matched", matched), ("last_compared", compared)):
@@ -266,10 +343,10 @@ class App:
                 if d.votes < int(src.get("min_votes", 20)) or self.store.is_seen(key):
                     continue
                 self.store.mark_seen(key)
-                if first:
-                    continue  # 처음 켤 때 이미 인기인 글로 알림이 쏟아지지 않게
-                self.tg.send(f"[인기 핫딜] 추천 {d.votes} · 댓글 {d.comments}\n{d.title}\n{d.source}\n{d.link}")
-                sent += 1
+                if first or d.ended or self.is_blocked(d.title):
+                    continue  # 처음 켤 때 기존 인기글, 종료된 특가, 제외 키워드는 건너뜀
+                sent += self.notify(f"[인기 핫딜] 추천 {d.votes} · 댓글 {d.comments}\n{d.title}\n{d.source}\n{d.link}",
+                                    d.name, d.price, d.source)
             time.sleep(self.delay)
         self.store.set_meta("popular_init", 1)
         return sent
@@ -332,6 +409,10 @@ class App:
         end = time.time() + hours * 3600
         next_run = last_save = 0
         self.serving, self._force = True, False
+        try:
+            self.tg.set_commands(COMMANDS)
+        except Exception:
+            log.warning("명령어 메뉴 등록 실패")
         try:
             self._serve_loop(end, interval, save, save_every)
         finally:
