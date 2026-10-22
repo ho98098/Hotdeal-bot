@@ -174,6 +174,8 @@ def test_lookup_picks_cheapest_site(tmp_path):
     ("엑스티어 알파 1.5L", {"ml": 1500}),
     ("TEAMGROUP DDR5 32GB (16GBx2)", {"ea": 2}),
     ("갤럭시 버즈3 프로 SM-R630N", {}),
+    ("아이패드 프로11 m4 256GB", {}),
+    ("네이버 멤버십 3개월 무료", {}),
 ])
 def test_quantity(t, exp):
     assert market.quantity(t) == exp

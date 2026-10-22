@@ -223,7 +223,8 @@ class App:
                 compared += 1
                 # 수량이 다르면 특가 수량 기준으로 시세 환산 (예: 12봉 vs 5봉)
                 qnote = ""
-                r = market.qty_ratio(d.name, top["title"])
+                r = market.qty_ratio(d.name, top["title"]) \
+                    if d.category in self.cfg.get("unit_compare_categories", ["식품", "생활용품"]) else None
                 if r and abs(r - 1) > 0.01:
                     ref = int(ref * r)
                     if top.get("overseas"):

@@ -188,8 +188,8 @@ def market_price(items):
     return items[0]["price"], items[0]
 
 
-_UNIT = r"(kg|g|ml|l|m)(?![a-z])"
-_CNT = r"(봉|개입|개|롤|캔|입|팩|병|포|구|알|매|ea|p)(?![a-z])"
+_UNIT = r"(kg|g|ml|l|m)(?![a-z0-9])"
+_CNT = r"(봉|개입|개|롤|캔|입|팩|병|포|구|알|매|ea|p)(?![a-z0-9월])"
 SIZE_COUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*" + _UNIT + r"\s*(?:[x×*]\s*(\d+)\s*(?:" + _CNT + r")?|(\d+)\s*" + _CNT + r")", re.I)
 SIZE_RE = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*" + _UNIT, re.I)
 COUNT_RE = re.compile(r"(?<![\d.])(\d+)\s*" + _CNT, re.I)
