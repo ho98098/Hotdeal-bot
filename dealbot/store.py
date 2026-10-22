@@ -87,6 +87,8 @@ class Store:
 
     def watch_remove(self, name):
         cur = self.db.execute("DELETE FROM watch WHERE name=?", (name,))
+        self.db.execute("DELETE FROM meta WHERE k IN (?,?,?)", (f"pin:{name}", f"lastalert:{name}", f"atl:{name}"))
+        self.db.execute("DELETE FROM prices WHERE key=?", (f"watch:{name}",))
         self.db.commit()
         return cur.rowcount > 0
 
@@ -95,6 +97,10 @@ class Store:
 
     def watch_set_alert(self, name, price):
         self.db.execute("UPDATE watch SET last_alert=? WHERE name=?", (price, name))
+        self.db.commit()
+
+    def clear_prices(self, key):
+        self.db.execute("DELETE FROM prices WHERE key=?", (key,))
         self.db.commit()
 
     # --- 기타 상태 ---

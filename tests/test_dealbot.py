@@ -86,11 +86,12 @@ def test_boards_alert_only_when_cheap_and_in_category(tmp_path):
 
 def test_watchlist_uses_history_and_dedupes(tmp_path):
     price = {"low": 100000}
-    app, tg = make(lambda q: items(price["low"], 101000, 102000, title=q), tmp_path)
+    app, tg = make(lambda q: items(price["low"], title=q), tmp_path)
     app.store.watch_add("갤럭시 버즈3 프로")
-    for i in range(5, -1, -1):              # 5일 전부터 같은 가격 -> 기록은 1건만
-        app.store.add_price("watch:갤럭시 버즈3 프로", 100000, time.time() - i * 86400)
-    assert len(app.store.price_series("watch:갤럭시 버즈3 프로")) == 1
+    app.pin("갤럭시 버즈3 프로", items(100000, title="갤럭시 버즈3 프로")[0])
+    key = "watch:갤럭시 버즈3 프로"
+    app.store.clear_prices(key)
+    app.store.add_price(key, 100000, time.time() - 5 * 86400)
     assert app.check_watchlist() == 0       # 평소 가격
     price["low"] = 80000
     assert app.check_watchlist() == 1 and "최근 30일" in tg.sent[0]
@@ -237,14 +238,16 @@ def test_watch_alltime_low_and_history(tmp_path):
     price = {"v": 100000}
     app, tg = make(lambda q: items(price["v"], title=q), tmp_path)
     app.store.watch_add("갤럭시 버즈3 프로")
+    app.pin("갤럭시 버즈3 프로", items(100000, title="갤럭시 버즈3 프로")[0])
+    key = "watch:갤럭시 버즈3 프로"
+    app.store.clear_prices(key)
     for i, p in enumerate([100000, 99000, 98000]):
-        app.store.add_price("watch:갤럭시 버즈3 프로", p, time.time() - (3 - i) * 86400)
+        app.store.add_price(key, p, time.time() - (3 - i) * 86400)
     price["v"] = 96000                                    # 이전 최저 98,000원보다 2% 낮음
     assert app.check_watchlist() == 1 and "등록 후 최저가 갱신" in tg.sent[0]
     assert app.check_watchlist() == 0                     # 같은 가격 재알림 없음
     rep = app.history_report("버즈3")
     assert "지금 96,000원" in rep and "등록 후 최저 96,000원" in rep and "일별 최저가" in rep
-
 
 def test_ruliweb_ended_and_title_ended():
     import pathlib
@@ -392,3 +395,31 @@ def test_api_source_interval(tmp_path):
               fetch_fn=lambda s: calls.append(1) or [])
     app.check_boards(); app.check_boards()
     assert len(calls) == 1                       # 60분 안에는 다시 호출하지 않음
+
+
+
+def test_watch_flipflop_products_no_repeat(tmp_path):
+    """'화장지' 처럼 넓은 이름: 사이트마다 다른 상품이 번갈아 잡혀도 고정 상품만 추적, 같은 알림 반복 없음."""
+    nb = {"title": "노브랜드 3겹 화장지 33m 30롤", "price": 10050, "overseas": 0, "mall": "에누리", "link": "e/88184212"}
+    other = {"title": "깨끗한나라 순수 3겹 30m 30롤", "price": 22650, "overseas": 0, "mall": "다나와", "link": "d/1"}
+    turn = {"n": 0}
+    def search(q):
+        turn["n"] += 1
+        return [dict(nb)] if turn["n"] % 2 else [dict(other)]
+    app, tg = make(search, tmp_path)
+    app.store.watch_add("화장지")
+    app.check_watchlist()                               # 예전 등록 제품 -> 고정 안내 1회
+    assert len(tg.sent) == 1 and "고정했어요" in tg.sent[0] and "노브랜드" in tg.sent[0]
+    for _ in range(6):
+        app.check_watchlist()
+    assert len(tg.sent) == 1                            # 가격 그대로 -> 추가 알림 없음
+    assert [p for _, p in app.store.price_series("watch:화장지")] == [10050]
+
+
+def test_pinned_pick_matches_same_product_across_sites(tmp_path):
+    app, _ = make(lambda q: [], tmp_path)
+    pin = {"title": "노브랜드 3겹 화장지 33m 30롤", "link": "e/1", "mall": "에누리", "price": 10050}
+    its = [{"title": "노브랜드 3겹 화장지 33m 30롤", "price": 9900, "mall": "다나와", "link": "d/9"},
+           {"title": "노브랜드 3겹 화장지 33m 24롤", "price": 7000, "mall": "다나와", "link": "d/8"},
+           {"title": "노브랜드 3겹 화장지 33m 30롤", "price": 10050, "mall": "에누리", "link": "e/1"}]
+    assert app.pinned_pick(pin, its)["price"] == 9900   # 24롤은 다른 상품

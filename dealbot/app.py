@@ -72,8 +72,16 @@ class App:
                 self.tg.send(f"삭제했어요: {arg}" if ok else f"목록에 없어요: {arg}")
             elif cmd == "/list":
                 rows = self.store.watch_list()
-                self.tg.send("관심 제품\n" + "\n".join(
-                    f"- {r[0]}" + (f" (알림 보낸 가격 {won(r[1])})" if r[1] else "") for r in rows)
+                def line(r):
+                    pin = json.loads(self.store.get_meta(f"pin:{r[0]}") or "null")
+                    ser = self.store.price_series(f"watch:{r[0]}")
+                    out = f"- {r[0]}"
+                    if pin:
+                        out += f"\n  {pin['title']}"
+                    if ser:
+                        out += f"\n  지금 {won(ser[-1][1])} · 등록 후 최저 {won(min(p for _, p in ser))}"
+                    return out
+                self.tg.send("관심 제품\n" + "\n".join(line(r) for r in rows)
                     if rows else "등록된 관심 제품이 없어요. /add 제품명 으로 등록하세요.")
             elif cmd == "/block" and arg:
                 bl = self.blocked()
@@ -242,10 +250,36 @@ class App:
             return (f"등록했어요: {name}\n다만 다나와·에누리에서 맞는 상품을 못 찾았어요. "
                     f"모델명을 더 정확히 적어 다시 등록해 주세요. (/remove {name})")
         top = items[0]
-        self.store.add_price(f"watch:{name}", top["price"])
-        return (f"등록했어요: {name}\n지금 이 상품으로 비교합니다\n"
+        self.pin(name, top)
+        return (f"등록했어요: {name}\n앞으로 이 상품 하나만 추적합니다\n"
                 f"[{top['mall']}] {top['title']}\n현재 최저가 {won(top['price'])}\n{top['link']}\n"
-                f"엉뚱한 상품이면 /remove {name} 후 모델명을 넣어 다시 등록하세요.")
+                f"다른 상품이면 /remove {name} 후 브랜드·규격까지 넣어 다시 등록하세요.")
+
+    # ---------- 관심 제품 상품 고정 ----------
+    def pin(self, name, item):
+        """관심 제품을 특정 상품 하나로 고정하고 기록을 새로 시작."""
+        self.store.set_meta(f"pin:{name}", json.dumps(
+            {"title": item["title"], "link": item["link"], "mall": item["mall"], "price": item["price"]}, ensure_ascii=False))
+        self.store.clear_prices(f"watch:{name}")
+        self.store.add_price(f"watch:{name}", item["price"])
+        for k in ("lastalert", "atl"):
+            self.store.set_meta(f"{k}:{name}", "")
+        self.store.watch_set_alert(name, None)
+
+    def pinned_pick(self, pin, items):
+        """고정 상품과 같은 상품만 골라 가장 싼 것. 같은 링크이거나,
+        다른 사이트라도 이름이 거의 같고 수량이 같으면 같은 상품으로 봄."""
+        pt = market._tokens(pin["title"])
+        same = []
+        for it in items:
+            if it["link"] == pin["link"]:
+                same.append(it)
+                continue
+            t = market._tokens(it["title"])
+            sim = len(pt & t) / max(1, len(pt | t))
+            if sim >= 0.75 and market.quantity(it["title"]) == market.quantity(pin["title"]):
+                same.append(it)
+        return min(same, key=lambda x: x["price"]) if same else None
 
     def blocked(self):
         return json.loads(self.store.get_meta("blocked") or "[]")
@@ -389,20 +423,34 @@ class App:
     def check_watchlist(self):
         sent = 0
         for name, last_alert in self.store.watch_list():
-            now_med, low = market.market_price(self.lookup(name) or [])
-            if not low:
+            items = self.lookup(name)
+            if not items:
                 continue
+            pin = json.loads(self.store.get_meta(f"pin:{name}") or "null")
+            if not pin:
+                # 상품 고정 이전에 등록된 관심 제품: 지금 상품으로 고정하고 섞인 기록은 새로 시작
+                self.pin(name, items[0])
+                self.tg.send(f"[관심 제품] '{name}' 을 이 상품으로 고정했어요. 앞으로 이 상품 가격만 추적합니다.\n"
+                             f"[{items[0]['mall']}] {items[0]['title']} {won(items[0]['price'])}\n{items[0]['link']}\n"
+                             f"다른 상품이면 /remove {name} 후 브랜드·규격까지 넣어 다시 등록하세요.")
+                continue
+            low = self.pinned_pick(pin, items)
+            if not low:
+                continue                                # 이번엔 고정 상품을 못 찾음 (품절 등)
             key = f"watch:{name}"
-            hist = self.store.history_median(key)      # 내가 쌓은 최저가 기록의 30일 중앙값
+            hist = self.store.history_median(key)      # 고정 상품 가격의 30일 시세 (유지 시간 반영)
             past = self.store.price_series(key)
             self.store.add_price(key, low["price"])
-            ref = hist or now_med                       # 기록이 부족한 초반엔 현재 판매가 중앙값
+            ref = hist or pin["price"]                  # 기록이 하루 미만이면 고정할 때 가격
             off = market.discount(low["price"], ref)
             # 등록 후 최저가 갱신: 하루 이상 기록이 있고, 이전 최저보다 1% 이상 낮을 때
             prev_min = min(p for _, p in past) if past else None
             atl = (prev_min and time.time() - past[0][0] >= 86400 and low["price"] <= prev_min * 0.99
                    and str(low["price"]) != self.store.get_meta(f"atl:{name}"))
-            cheap = self.threshold <= off < 0.7 and (last_alert is None or low["price"] < last_alert)
+            # 같은 가격은 7일 동안 다시 알리지 않음 (더 내려가면 알림)
+            la = json.loads(self.store.get_meta(f"lastalert:{name}") or "null")
+            recent_same = la and time.time() - la["ts"] < 7 * 86400 and low["price"] >= la["price"]
+            cheap = self.threshold <= off < 0.7 and not recent_same
             if atl or cheap:
                 head = []
                 if atl:
@@ -415,11 +463,9 @@ class App:
                     f"[관심 제품] " + " · ".join(head) + f"\n{low['title']}\n"
                     f"지금 {won(low['price'])} / 기준 {won(ref)}\n{low['mall']}\n{low['link']}"
                 )
-                if cheap:
-                    self.store.watch_set_alert(name, low["price"])
+                self.store.set_meta(f"lastalert:{name}", json.dumps({"price": low["price"], "ts": time.time()}))
+                self.store.watch_set_alert(name, low["price"])
                 sent += 1
-            elif last_alert is not None and off < self.threshold:
-                self.store.watch_set_alert(name, None)  # 가격이 돌아오면 다음 하락 때 다시 알림
         return sent
 
     def run_once(self):
