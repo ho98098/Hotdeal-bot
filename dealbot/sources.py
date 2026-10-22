@@ -70,9 +70,32 @@ def parse_rss(xml_bytes, source):
     return deals
 
 
+def parse_clien(html_text, source="클리앙"):
+    """클리앙 알뜰구매 목록 (RSS가 없어 목록 화면을 읽음)."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_text, "html.parser")
+    deals = []
+    for row in soup.select("div.list_item.symph_row[data-board-sn]"):
+        a = row.select_one(".list_subject a[data-role=list-title-text]")
+        if not a:
+            continue
+        title = a.get_text(" ", strip=True)
+        link = "https://www.clien.net" + a.get("href", "").split("?")[0]
+        mall, name, price = parse_title(title)
+        deals.append(Deal(source, f"{source}:{row['data-board-sn']}", title, name, mall, price, link))
+    return deals
+
+
+BROWSER_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/128.0 Safari/537.36", "Accept-Language": "ko-KR,ko;q=0.9"}
+
+
 def fetch_source(src, timeout=15):
-    r = requests.get(src["url"], headers=UA, timeout=timeout)
+    kind = src.get("type", "rss")
+    r = requests.get(src["url"], headers=BROWSER_UA if kind != "rss" else UA, timeout=timeout)
     r.raise_for_status()
+    if kind == "clien":
+        return parse_clien(r.text, src["name"])
     return parse_rss(r.content, src["name"])
 
 

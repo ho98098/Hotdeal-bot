@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - run: pip install requests && cd diag && python fetch.py > log.txt 2>&1; cat log.txt
+      - run: pip install -r requirements.txt && cd diag && python fetch.py > log.txt 2>&1; cat log.txt
       - run: |
           cd diag && git config user.name d && git config user.email d@d
-          git checkout -q --orphan diag-out && git rm -rqf --cached . 2>/dev/null; git add -f out log.txt && git commit -qm diag && git push -qf origin HEAD:diag-out
+          git checkout -q --orphan diag-out && git rm -rqf --cached . 2>/dev/null; mkdir -p out && git add -f out log.txt && git commit -qm diag && git push -qf origin HEAD:diag-out

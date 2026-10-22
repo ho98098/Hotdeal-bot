@@ -60,5 +60,13 @@ categories:
 sources:
   - name: 뽐뿌
     url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu"
+  - name: 해외뽐뿌
+    url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu4"
   - name: 루리웹
     url: "https://bbs.ruliweb.com/market/board/1020/rss"
+  - name: 클리앙
+    url: "https://www.clien.net/service/board/jirum"
+    type: clien
+  - name: 어미새
+    url: "https://eomisae.co.kr/fs/rss"
+  # 퀘이사존·펨코·아카라이브는 GitHub 서버 접속을 차단해서 제외 (2026-10 확인)

@@ -137,3 +137,28 @@ def test_category_commands(tmp_path):
     app.handle_commands()
     assert app.categories() == {"생활용품": ["세제"]}   # 전자제품은 키워드가 비어 삭제됨
     assert "[생활용품]" in tg.sent[-1]
+
+
+def test_new_sources_and_enuri():
+    import pathlib
+    d = pathlib.Path(__file__).parent / "fixtures"
+    cl = sources.parse_clien((d / "clien.html").read_text("utf-8"))
+    assert len(cl) > 20 and cl[0].link.startswith("https://www.clien.net/service/board/jirum/")
+    assert any("네이버 멤버쉽" in x.title for x in cl)
+    eo = sources.parse_rss((d / "eomisae.xml").read_bytes(), "어미새")
+    assert eo and eo[0].price == 43070
+    en = market.parse_enuri((d / "enuri_m.html").read_text("utf-8"))
+    assert en[0]["price"] == 217990 and all("중고" not in i["title"] for i in en)
+    ex = market.relevant(market.parse_enuri((d / "enuri_pc.html").read_text("utf-8")), "현대 엑스티어")
+    assert ex and "엑스티어" in ex[0]["title"]
+
+
+def test_lookup_picks_cheapest_site(tmp_path):
+    def search(q):
+        return [{"title": q, "price": 220000, "overseas": 170000, "mall": "다나와", "link": "d"},
+                {"title": q, "price": 217990, "overseas": 0, "mall": "에누리", "link": "e"}]
+    app, tg = make(search, tmp_path)
+    items = app.lookup("갤럭시 버즈3 프로")
+    assert items[0]["mall"] == "에누리"
+    rep = app.price_report("갤럭시 버즈3 프로")
+    assert rep.index("[에누리]") < rep.index("[다나와]") and "해외구매 170,000원" in rep

@@ -13,7 +13,7 @@ HELP = (
     "/add 제품명 - 관심 제품 등록\n"
     "/remove 제품명 - 관심 제품 삭제\n"
     "/list - 관심 제품 목록\n"
-    "/price 제품명 - 지금 다나와 시세 조회\n"
+    "/price 제품명 - 지금 다나와·에누리 시세 조회\n"
     "/status - 봇 상태와 최근 확인 결과\n"
     "/category - 감시 카테고리와 키워드 보기\n"
     "/catadd 카테고리 키워드 - 키워드 추가\n"
@@ -25,7 +25,7 @@ HELP = (
 class App:
     def __init__(self, cfg, store, tg, search_fn=None, fetch_fn=None):
         self.cfg, self.store, self.tg = cfg, store, tg
-        self.search = search_fn or market.search
+        self.search = search_fn or market.search_all
         self.lookup_ok = self.lookup_fail = 0
         self.fetch = fetch_fn or sources.fetch_source
         self.threshold = float(cfg.get("discount_threshold", 0.15))
@@ -102,9 +102,9 @@ class App:
         self.tick()
         query = market.clean_query(query) or query
         try:
-            items = market.relevant(self.search(query), query)
+            tops, rest = market.best_per_mall(self.search(query), query)
             self.lookup_ok += 1
-            return items
+            return tops + rest  # 첫 항목 = 사이트별 대표 중 가장 싼 것
         except Exception as e:
             self.lookup_fail += 1
             log.warning("시세 조회 실패 %s: %s", query, e)
@@ -117,16 +117,19 @@ class App:
         if items is None:
             return f"'{query}' 시세 조회에 실패했어요. 잠시 뒤 다시 시도해 주세요."
         if not items:
-            return f"'{query}' 와 맞는 상품을 다나와에서 찾지 못했어요. 모델명을 더 정확히 적어 주세요."
-        top = items[0]
-        lines = [f"[다나와] {top['title']}", f"국내 정품 최저가: {won(top['price'])}"]
-        if top.get("overseas"):
-            lines.append(f"해외구매 최저가: {won(top['overseas'])}")
-        lines.append("(카드할인·쿠폰 적용 전 가격)")
-        others = [f"- {it['title']}: {won(it['price'])}" for it in items[1:3]]
-        if others:
-            lines += ["", "비슷한 상품"] + others
-        return "\n".join(lines + [top["link"]])
+            return f"'{query}' 와 맞는 상품을 다나와·에누리에서 찾지 못했어요. 모델명을 더 정확히 적어 주세요."
+        malls = {}
+        for it in items:
+            malls.setdefault(it["mall"], it)
+        lines = [f"'{query}' 현재 최저가"]
+        for m, it in sorted(malls.items(), key=lambda x: x[1]["price"]):
+            lines += ["", f"[{m}] {won(it['price'])}", it["title"]]
+            if it.get("overseas"):
+                lines.append(f"해외구매 {won(it['overseas'])}")
+            lines.append(it["link"])
+        lines += ["", "(국내 정품 기준, 카드할인·쿠폰 적용 전)"]
+        return "\n".join(lines)
+
 
     def status_report(self):
         g = lambda k: self.store.get_meta(k, "-")
@@ -177,7 +180,7 @@ class App:
                 if self.threshold <= off < 0.7:
                     self.tg.send(
                         f"[{d.category}] 시세보다 {off:.0%} 저렴\n{d.name}\n"
-                        f"특가 {won(d.price)} / 다나와 {basis} 최저 {won(ref)}\n비교 상품: {top['title']}\n"
+                        f"특가 {won(d.price)} / {top['mall']} {basis} 최저 {won(ref)}\n비교 상품: {top['title']}\n"
                         f"{d.mall or '-'} · {d.source}\n{d.link}"
                     )
                     sent += 1
@@ -200,7 +203,7 @@ class App:
             ref = hist or now_med                       # 기록이 부족한 초반엔 현재 판매가 중앙값
             off = market.discount(low["price"], ref)
             if self.threshold <= off < 0.7 and (last_alert is None or low["price"] < last_alert):
-                basis = "최근 30일 시세" if hist else "현재 다나와 최저가"
+                basis = "최근 30일 시세" if hist else "현재 최저가"
                 self.tg.send(
                     f"[관심 제품] {basis}보다 {off:.0%} 저렴\n{low['title']}\n"
                     f"지금 {won(low['price'])} / 기준 {won(ref)}\n{low['mall']}\n{low['link']}"
@@ -223,7 +226,7 @@ class App:
             today = time.strftime("%Y-%m-%d")
             if self.store.get_meta("fail_notice") != today:
                 self.store.set_meta("fail_notice", today)
-                self.tg.send(f"주의: 이번 확인에서 다나와 시세 조회가 {self.lookup_fail}번 모두 실패했어요.")
+                self.tg.send(f"주의: 이번 확인에서 시세 조회가 {self.lookup_fail}번 모두 실패했어요.")
         return n
 
     def serve(self, hours=5.7, save=None, save_every=600):

@@ -1,5 +1,6 @@
 """다나와 가격비교 검색으로 시세 계산.
 (네이버 쇼핑 검색 API는 2026-07-31 종료되어 사용하지 않습니다.)"""
+import json
 import re
 import statistics
 
@@ -84,6 +85,79 @@ MODEL_RE = re.compile(r"\b[A-Z]{1,5}-?[A-Z]?\d{2,}[A-Z0-9]*\b")
 def clean_query(name):
     """핫딜 글 제목에서 검색에 방해되는 말(괄호, 배송·관세 문구 등)을 걷어냄."""
     return re.sub(r"\s+", " ", NOISE_RE.sub(" ", name)).strip()
+
+
+ENURI_URLS = ("https://www.enuri.com/search.jsp", "https://m.enuri.com/m/search.jsp")
+ENURI_SKIP = ("중고", "리퍼", "해외", "렌탈")
+
+
+def parse_enuri(html):
+    """에누리 검색 결과에 들어 있는 상품 목록(JSON-LD)에서 이름·최저가 추출."""
+    soup = BeautifulSoup(html, "html.parser")
+    out = []
+    for sc in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(sc.string or "")
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or data.get("@type") != "ItemList":
+            continue
+        for el in data.get("itemListElement", []):
+            it = el.get("item", {})
+            name = re.sub(r"\s+", " ", it.get("name", "")).strip()
+            label = " ".join(re.findall(r"\[([^\]]*)\]", name))
+            if any(x in label for x in ENURI_SKIP):
+                continue
+            try:
+                price = int(it.get("offers", {}).get("lowPrice") or 0)
+            except (TypeError, ValueError):
+                price = 0
+            if price:
+                out.append({"title": re.sub(r"\s*\[[^\]]*\]\s*$", "", name), "price": price,
+                            "overseas": 0, "mall": "에누리", "link": it.get("url", "")})
+    return out
+
+
+def search_enuri(query, timeout=15):
+    last = None
+    for url in ENURI_URLS:  # PC 화면에 목록이 없으면 모바일 화면으로
+        try:
+            r = requests.get(url, params={"keyword": query}, headers=HEADERS, timeout=timeout)
+            r.raise_for_status()
+            items = parse_enuri(r.text)
+            if items:
+                return items
+        except Exception as e:
+            last = e
+    if last:
+        raise last
+    return []
+
+
+def search_all(query):
+    """다나와 + 에누리. 한쪽이 실패해도 다른 쪽 결과는 사용."""
+    out, errors = [], []
+    for fn in (search, search_enuri):
+        try:
+            out += fn(query)
+        except Exception as e:
+            errors.append(e)
+    if errors and len(errors) == 2:
+        raise errors[0]
+    return out
+
+
+def best_per_mall(items, query):
+    """사이트(다나와·에누리)마다 가장 관련 높은 상품 하나씩, 싼 순서로.
+    반환: (대표 목록, 나머지 관련 상품)"""
+    tops, rest, seen = [], [], set()
+    for it in relevant(items, query):
+        if it["mall"] in seen:
+            rest.append(it)
+        else:
+            seen.add(it["mall"])
+            tops.append(it)
+    return sorted(tops, key=lambda x: x["price"]), rest
 
 
 def _tokens(s):
