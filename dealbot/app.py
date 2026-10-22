@@ -165,6 +165,7 @@ class App:
             if it.get("overseas"):
                 lines.append(f"해외구매 {won(it['overseas'])}")
             lines.append(it["link"])
+        lines += self.shop_lines(query)
         lines += ["", "(국내 정품 기준, 카드할인·쿠폰 적용 전)"]
         return "\n".join(lines)
 
@@ -211,6 +212,26 @@ class App:
                 bar = "▇" * (1 + int(7 * (v - lo7) / (hi7 - lo7))) if hi7 > lo7 else "▇"
                 lines.append(f"{d} {bar} {won(v)}")
         return "\n".join(lines)
+
+    def shop_lines(self, query):
+        """쿠팡·알리 API 키가 있으면 /price 에 함께 표시."""
+        from . import shops
+        out = []
+        q = market.clean_query(query) or query
+        for label, fn, ok in (("쿠팡", shops.coupang_search, shops.coupang_keys()),
+                              ("알리 (해외배송)", shops.ali_search, shops.ali_keys())):
+            if not ok:
+                continue
+            try:
+                found = market.relevant(fn(q), q)
+            except Exception as e:
+                log.warning("%s 검색 실패: %s", label, e)
+                out += ["", f"[{label}] 조회 실패"]
+                continue
+            if found:
+                top = min(found[:5], key=lambda x: x["price"])
+                out += ["", f"[{label}] {won(top['price'])}", top["title"], top["link"]]
+        return out
 
     def add_report(self, name):
         """관심 제품 등록 직후 지금 찾은 상품과 가격을 보여주고 첫 기록으로 저장."""
@@ -280,6 +301,12 @@ class App:
         min_price = int(self.cfg.get("min_price", 0))
         sent = new = matched = compared = 0
         for src in self.cfg.get("sources", []):
+            every = float(src.get("interval_minutes", 0)) * 60   # API 호출 제한이 있는 곳은 더 드물게
+            last_key = "src_last:" + src["name"]
+            if every and time.time() - float(self.store.get_meta(last_key, 0)) < every:
+                continue
+            if every:
+                self.store.set_meta(last_key, time.time())
             try:
                 deals = self.fetch(src)
             except Exception as e:
@@ -317,7 +344,7 @@ class App:
                         top = dict(top, overseas=int(top["overseas"] * r))
                     qnote = f"\n(수량 환산: 비교 상품의 {r:g}배 기준)"
                 # 해외직구 특가는 다나와 해외구매 최저가와 비교
-                ovs_deal = any(k in d.title for k in ("해외", "직구", "관부가세", "관세"))
+                ovs_deal = d.mall == "알리" or any(k in d.title for k in ("해외", "직구", "관부가세", "관세"))
                 basis = "국내 정품"
                 if ovs_deal and top.get("overseas"):
                     ref, basis = top["overseas"], "해외구매"

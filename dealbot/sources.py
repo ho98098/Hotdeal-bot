@@ -142,6 +142,9 @@ BROWSER_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebK
 
 def fetch_source(src, timeout=15):
     kind = src.get("type", "rss")
+    if kind in ("coupang_goldbox", "ali_hot"):
+        from . import shops
+        return shops.coupang_goldbox() if kind == "coupang_goldbox" else shops.ali_hot()
     r = requests.get(src["url"], headers=BROWSER_UA if kind != "rss" else UA, timeout=timeout)
     r.raise_for_status()
     if kind == "clien":

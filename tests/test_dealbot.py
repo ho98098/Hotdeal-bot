@@ -336,3 +336,59 @@ def test_stall_notice(tmp_path):
     tg.sent.clear()
     app.serve(hours=0.00001)                       # 바로 다시 시작하면 알림 없음
     assert not any("멈춰" in t for t in tg.sent)
+
+
+def test_shops_without_keys_are_silent(monkeypatch):
+    from dealbot import shops
+    for k in ("COUPANG_ACCESS_KEY", "COUPANG_SECRET_KEY", "ALI_APP_KEY", "ALI_APP_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    assert shops.coupang_goldbox() == [] and shops.ali_hot() == []
+    assert sources.fetch_source({"name": "쿠팡 골드박스", "type": "coupang_goldbox"}) == []
+
+
+def test_coupang_sign_and_parse(monkeypatch):
+    from dealbot import shops
+    auth = shops.coupang_auth("GET", "/v2/x", "a=1", "AK", "SK", now=0)
+    assert auth.startswith("CEA algorithm=HmacSHA256, access-key=AK, signed-date=700101T000000Z, signature=")
+    import hmac, hashlib
+    assert auth.endswith(hmac.new(b"SK", b"700101T000000ZGET/v2/xa=1", hashlib.sha256).hexdigest())
+    monkeypatch.setenv("COUPANG_ACCESS_KEY", "AK"); monkeypatch.setenv("COUPANG_SECRET_KEY", "SK")
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"rCode": "0", "data": [
+            {"productId": 7, "productName": "농심 신라면 40봉", "productPrice": 25900, "productUrl": "https://link.coupang.com/a", "isRocket": True}]}
+    seen = {}
+    monkeypatch.setattr(shops.requests, "get", lambda url, headers, timeout: seen.update(url=url, h=headers) or R())
+    d = shops.coupang_goldbox()[0]
+    assert (d.source, d.price, d.mall, d.link) == ("쿠팡 골드박스", 25900, "쿠팡", "https://link.coupang.com/a")
+    assert "로켓배송" in d.title and seen["url"].endswith("/products/goldbox")
+
+
+def test_ali_sign_and_parse(monkeypatch):
+    from dealbot import shops
+    import hmac, hashlib
+    assert shops.ali_sign({"b": "2", "a": "1"}, "S") == hmac.new(b"S", b"a1b2", hashlib.sha256).hexdigest().upper()
+    monkeypatch.setenv("ALI_APP_KEY", "K"); monkeypatch.setenv("ALI_APP_SECRET", "S")
+    body = {"aliexpress_affiliate_hotproduct_query_response": {"resp_result": {"resp_code": 200, "result": {
+        "products": {"product": [{"product_id": 1, "product_title": "베이스어스 무선 이어버드",
+                                  "target_sale_price": "23,500", "target_original_price": "58000",
+                                  "promotion_link": "https://s.click.aliexpress.com/x"}]}}}}}
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return body
+    sent = {}
+    monkeypatch.setattr(shops.requests, "post", lambda url, data, timeout: sent.update(data) or R())
+    d = shops.ali_hot()[0]
+    assert (d.price, d.mall, d.title) == (23500, "알리", "[해외] 베이스어스 무선 이어버드")
+    assert sent["target_currency"] == "KRW" and sent["sign"] == shops.ali_sign(
+        {k: v for k, v in sent.items() if k != "sign"}, "S")
+
+
+def test_api_source_interval(tmp_path):
+    calls = []
+    cfg = {"categories": {}, "request_delay_seconds": 0,
+           "sources": [{"name": "쿠팡 골드박스", "type": "coupang_goldbox", "interval_minutes": 60}]}
+    app = App(cfg, Store(str(tmp_path / "i.db")), FakeTG(), search_fn=lambda q: [],
+              fetch_fn=lambda s: calls.append(1) or [])
+    app.check_boards(); app.check_boards()
+    assert len(calls) == 1                       # 60분 안에는 다시 호출하지 않음

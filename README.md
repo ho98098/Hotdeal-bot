@@ -5,6 +5,8 @@
 
 ## 설정 (Settings > Secrets and variables > Actions > New repository secret)
 - `TELEGRAM_BOT_TOKEN` : BotFather에서 받은 봇 토큰
+- `COUPANG_ACCESS_KEY`, `COUPANG_SECRET_KEY` : 쿠팡 파트너스 Open API 키 (선택, 최종 승인 후 발급)
+- `ALI_APP_KEY`, `ALI_APP_SECRET`, `ALI_TRACKING_ID` : 알리익스프레스 제휴 API 키 (선택)
 - `TELEGRAM_CHAT_ID` : 비워두면 봇에게 처음 /start 를 보낸 채팅이 자동으로 등록됩니다
 
 ## 텔레그램 명령
