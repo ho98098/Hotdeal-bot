@@ -1,0 +1,100 @@
+# 이 파일을 config.yaml 로 복사한 뒤 값을 채우세요.
+# 토큰과 API 키는 이 파일에 쓰지 말고 GitHub 저장소 Secrets 에 넣습니다.
+
+interval_minutes: 5         # 특가 확인 주기 (명령은 즉시 응답)
+discount_threshold: 0.15    # 시세보다 15% 이상 싸면 알림
+min_price: 5000             # 이 금액 미만 상품은 무시
+request_delay_seconds: 2    # 사이트 요청 사이 간격 (차단 방지)
+
+unit_compare_categories: [식품, 생활용품]   # 수량·용량 환산 비교할 카테고리
+notify_unmatched: true     # 시세를 못 찾은 특가도 카테고리에 맞으면 알림 (아래 반응 확인 후)
+pending:                   # 시세 비교 불가 특가는 반응을 확인한 뒤 알림
+  min_votes: 5             # 추천 이 이상이거나
+  min_comments: 10         # 댓글 이 이상이면 알림 (비추천이 추천 이상이거나 바이럴·품절 댓글이 많으면 버림)
+  max_hours: 3             # 이 시간 안에 반응이 없으면 버림
+  check_minutes: 10        # 반응 확인 간격
+
+# 인기 핫딜: 추천 수가 기준 이상이면 카테고리·시세와 상관없이 알림
+popular:
+  - name: 루리웹
+    url: "https://bbs.ruliweb.com/market/board/1020"
+    type: ruliweb
+    min_votes: 20
+  - name: 클리앙
+    url: "https://www.clien.net/service/board/jirum"
+    type: clien
+    min_votes: 10
+
+# 감시할 카테고리: 제목에 키워드가 하나라도 들어 있으면 해당 카테고리로 봅니다.
+categories:
+  전자제품:
+    - 노트북
+    - 모니터
+    - SSD
+    - 이어폰
+    - 헤드폰
+    - 태블릿
+    - 아이패드
+    - 갤럭시
+    - 아이폰
+    - 그래픽카드
+    - 키보드
+    - 마우스
+    - TV
+  식품:
+    - 라면
+    - 생수
+    - 커피
+    - 원두
+    - 우유
+    - 두유
+    - 햇반
+    - 즉석밥
+    - 만두
+    - 닭가슴살
+    - 소고기
+    - 한우
+    - 돼지고기
+    - 삼겹살
+    - 계란
+    - 쌀
+    - 김치
+    - 과자
+    - 견과
+    - 제로콜라
+    - 탄산수
+    - 음료
+    - 참치
+    - 스팸
+    - 프로틴
+  생활용품:
+    - 화장지
+    - 휴지
+    - 두루마리
+    - 물티슈
+    - 키친타올
+    - 키친타월
+
+# 핫딜 게시판 (RSS)
+sources:
+  - name: 뽐뿌
+    url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu"
+  - name: 알리뽐뿌
+    url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu8"
+  - name: 해외뽐뿌
+    url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu4"
+  - name: 루리웹
+    url: "https://bbs.ruliweb.com/market/board/1020/rss"
+  - name: 클리앙
+    url: "https://www.clien.net/service/board/jirum"
+    type: clien
+  - name: 어미새
+    url: "https://eomisae.co.kr/fs/rss"
+  # 쇼핑몰 공식 API (GitHub Secrets 에 키를 넣으면 자동으로 켜짐)
+  - name: 쿠팡 골드박스
+    type: coupang_goldbox
+    interval_minutes: 60
+  - name: 알리 인기상품
+    type: ali_hot
+    interval_minutes: 60
+  # 퀘이사존·펨코·아카라이브는 GitHub 서버 접속을 차단해서 제외 (2026-10 확인)
