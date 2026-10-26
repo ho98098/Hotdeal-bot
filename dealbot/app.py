@@ -45,11 +45,13 @@ HELP = (
 
 
 class App:
-    def __init__(self, cfg, store, tg, search_fn=None, fetch_fn=None):
+    def __init__(self, cfg, store, tg, search_fn=None, fetch_fn=None, react_fn=None):
         self.cfg, self.store, self.tg = cfg, store, tg
         self.search = search_fn or market.search_all
         self.lookup_ok = self.lookup_fail = 0
         self.fetch = fetch_fn or sources.fetch_source
+        self.react = react_fn or sources.fetch_reaction
+        self.rss_react = {}   # 이번 수집에서 본 RSS 글의 반응 수치 (뽐뿌용)
         self.threshold = float(cfg.get("discount_threshold", 0.15))
         self.delay = float(cfg.get("request_delay_seconds", 2))
 
@@ -331,6 +333,7 @@ class App:
         return (f"봇 응답 확인: {alive}\n마지막 특가 확인: {g('last_run')}\n"
                 f"게시판 새 글 {g('last_new')}개 중 카테고리 해당 {g('last_matched')}개, 시세 비교 {g('last_compared')}개\n"
                 f"오늘 보낸 특가 알림: {g('alerts_' + time.strftime('%Y-%m-%d'))}건\n"
+                f"반응 확인 대기 중인 특가: {len(self._pending())}개\n"
                 f"관심 제품 {len(self.store.watch_list())}개, 확인 주기 {self.cfg.get('interval_minutes', 5)}분")
 
     def cat_excludes(self):
@@ -366,6 +369,7 @@ class App:
                 log.warning("수집 실패 %s: %s", src.get("name"), e)
                 continue
             for d in deals:
+                self.rss_react[d.id] = (d.votes, d.downvotes, d.comments)
                 if self.store.is_seen(d.id):
                     continue
                 self.store.mark_seen(d.id)
@@ -380,11 +384,9 @@ class App:
                 ref, top = market.market_price(items or [])
                 if not ref:
                     # 가격비교 사이트에 없는 특가(기프티콘·앱 쿠폰 등)도 카테고리에 맞으면 알림
+                    # 바로 보내지 않고 대기 목록에 넣어 추천·댓글 반응을 확인한 뒤 보냄
                     if self.cfg.get("notify_unmatched", True):
-                        sent += self.notify(
-                            f"[{d.category}] 새 핫딜 (시세 비교 불가)\n{d.name}\n"
-                            + (f"특가 {won(d.price)}\n" if d.price else "")
-                            + f"{d.mall or '-'} · {d.source}\n{d.link}", d.name, d.price, d.source)
+                        self.pending_add(d)
                     continue
                 compared += 1
                 # 수량이 다르면 특가 수량 기준으로 시세 환산 (예: 12봉 vs 5봉)
@@ -412,6 +414,84 @@ class App:
         if new:  # 첫 실행 등으로 새 글이 없으면 직전 통계 유지
             for k, v in (("last_new", new), ("last_matched", matched), ("last_compared", compared)):
                 self.store.set_meta(k, v)
+        return sent
+
+    # ---------- 시세 비교 불가 특가: 반응 확인 후 알림 ----------
+    VIRAL_WORDS = ("광고", "바이럴", "업자", "홍보", "뒷광고", "셀프", "직원이", "판매자 본인", "알바")
+    END_WORDS = ("품절", "종료", "끝났", "마감", "솔드아웃", "매진", "막혔")
+
+    def _pending(self):
+        return json.loads(self.store.get_meta("pending") or "[]")
+
+    def _save_pending(self, items):
+        self.store.set_meta("pending", json.dumps(items, ensure_ascii=False))
+
+    def pending_add(self, d):
+        items = self._pending()
+        items.append({"id": d.id, "source": d.source, "link": d.link, "title": d.title, "name": d.name,
+                      "price": d.price, "category": d.category, "mall": d.mall, "ts": time.time(), "checked": 0})
+        self._save_pending(items[-300:])
+
+    def judge(self, r):
+        """반응으로 판정: ("send"|"drop"|"wait", 이유)"""
+        pc = self.cfg.get("pending", {})
+        texts = r.get("texts") or []
+        viral = sum(any(w in t for w in self.VIRAL_WORDS) for t in texts)
+        ended = sum(any(w in t for w in self.END_WORDS) for t in texts)
+        if viral >= 2:
+            return "drop", f"바이럴 의심 댓글 {viral}개"
+        if ended >= 2:
+            return "drop", f"종료·품절 댓글 {ended}개"
+        if r["downvotes"] and r["downvotes"] >= r["votes"]:
+            return "drop", "비추천이 추천 이상"
+        if r["votes"] >= int(pc.get("min_votes", 5)) or r["comments"] >= int(pc.get("min_comments", 10)):
+            return "send", (f"바이럴 의심 댓글 {viral}개" if viral else "")
+        return "wait", ""
+
+    def check_pending(self):
+        pc = self.cfg.get("pending", {})
+        max_age = float(pc.get("max_hours", 3)) * 3600
+        every = float(pc.get("check_minutes", 10)) * 60
+        keep, sent, now = [], 0, time.time()
+        for p in self._pending():
+            if now - p["ts"] > max_age:
+                continue                                    # 시간 안에 반응이 없으면 버림
+            if now - p.get("checked", 0) < every:
+                keep.append(p)
+                continue
+            p["checked"] = now
+            if self.is_blocked(p["title"]) or sources.is_ended(p["title"]):
+                continue
+            if sources.view_kind(p["link"]):
+                self.tick()
+                try:
+                    r = self.react(p["link"])
+                except Exception as e:
+                    log.warning("반응 확인 실패 %s: %s", p["link"], e)
+                    keep.append(p)
+                    continue
+                finally:
+                    time.sleep(self.delay)
+            else:
+                v = self.rss_react.get(p["id"])
+                if v is None:
+                    continue                                # RSS 목록에서 밀려나 더 확인할 수 없음
+                r = {"votes": v[0], "downvotes": v[1], "comments": v[2], "texts": []}
+            verdict, why = self.judge(r)
+            if verdict == "wait":
+                keep.append(p)
+                continue
+            if verdict == "drop":
+                log.info("대기 특가 버림 (%s): %s", why, p["title"])
+                continue
+            mins = int((now - p["ts"]) / 60)
+            text = (f"[{p['category']}] 새 핫딜 (시세 비교 불가 · 반응 확인됨)\n{p['name']}\n"
+                    + (f"특가 {won(p['price'])}\n" if p["price"] else "")
+                    + f"추천 {r['votes']} · 댓글 {r['comments']} ({mins}분 후 확인)"
+                    + (f"\n⚠ {why}" if why else "")
+                    + f"\n{p['mall'] or '-'} · {p['source']}\n{p['link']}")
+            sent += self.notify(text, p["name"], p["price"], p["source"])
+        self._save_pending(keep)
         return sent
 
     # ---------- 인기 핫딜 ----------
@@ -488,7 +568,7 @@ class App:
         return sent
 
     def run_once(self):
-        n = self.check_boards() + self.check_popular() + self.check_watchlist()
+        n = self.check_boards() + self.check_pending() + self.check_popular() + self.check_watchlist()
         # 한국 시간으로 기록
         self.store.set_meta("last_run", time.strftime("%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600)))
         if n:

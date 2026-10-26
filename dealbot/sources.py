@@ -31,6 +31,7 @@ class Deal:
     votes: int = 0
     comments: int = 0
     ended: bool = False
+    downvotes: int = 0
 
 
 ENDED_RE = re.compile(r"[\[(【]\s*(종료|품절|마감|끝)\s*[\])】]|^\s*(종료|품절)\b|딜\s*종료|품절됨")
@@ -82,7 +83,12 @@ def parse_rss(xml_bytes, source):
         if not title or not link:
             continue
         mall, name, price = parse_title(title)
-        deals.append(Deal(source, f"{source}:{link}", title, name, mall, price, link, ended=is_ended(title)))
+        d = Deal(source, f"{source}:{link}", title, name, mall, price, link, ended=is_ended(title))
+        # 뽐뿌 RSS 의 <hits> [댓글|조회|추천|비추천] (두 번째가 조회수인 것만 확인됨)
+        h = re.findall(r"\d+", item.findtext("hits") or "")
+        if len(h) == 4:
+            d.comments, d.votes, d.downvotes = int(h[0]), int(h[2]), int(h[3])
+        deals.append(d)
     return deals
 
 
@@ -174,3 +180,54 @@ def match_category(title, categories, excludes=None):
             continue  # 이 카테고리 제외 단어가 있으면 다음 카테고리 확인
         return cat
     return ""
+
+
+# ---------------- 게시글 상세: 반응(추천·비추천·댓글) 읽기 ----------------
+def _int(text):
+    m = re.search(r"\d[\d,]*", text or "")
+    return int(m.group().replace(",", "")) if m else 0
+
+
+def parse_reaction(html_text, kind):
+    """반환: {"votes", "downvotes", "comments", "texts"(댓글 내용 목록)} 또는 None(지원 안 함)"""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_text, "html.parser")
+    if kind == "ruliweb":
+        like = soup.select_one("span.like_value")
+        dis = soup.select_one("span.dislike_value")
+        cnt = soup.select_one(".comment_count")
+        texts = [e.get_text(" ", strip=True) for e in soup.select(".comment_view .comment_element .text_wrapper")]
+        return {"votes": _int(like.get_text() if like else ""), "downvotes": _int(dis.get_text() if dis else ""),
+                "comments": _int(cnt.get_text() if cnt else "") or len(texts), "texts": texts}
+    if kind == "clien":
+        sym = soup.select_one(".symph_count") or soup.select_one(".view_symph")
+        head = soup.select_one(".comment_head")
+        texts = [e.get_text(" ", strip=True) for e in soup.select(".comment_content")]
+        n = re.search(r"\[\s*(\d+)\s*\]", head.get_text() if head else "")
+        return {"votes": _int(sym.get_text() if sym else ""), "downvotes": 0,
+                "comments": int(n.group(1)) if n else len(texts), "texts": texts}
+    if kind == "eomisae":
+        vote = soup.select_one(".vote")
+        m = re.search(r"추천\s*(\d+)", vote.get_text(" ") if vote else "")
+        texts = [e.get_text(" ", strip=True) for e in soup.select(".xe_content")][1:]  # 첫 번째는 본문
+        return {"votes": int(m.group(1)) if m else 0, "downvotes": 0, "comments": len(texts), "texts": texts}
+    return None
+
+
+def view_kind(link):
+    if "ruliweb.com" in link:
+        return "ruliweb"
+    if "clien.net" in link:
+        return "clien"
+    if "eomisae.co.kr" in link:
+        return "eomisae"
+    return None  # 뽐뿌 상세 페이지는 GitHub 서버 접속이 막혀 RSS 숫자로 판단
+
+
+def fetch_reaction(link, timeout=15):
+    kind = view_kind(link)
+    if not kind:
+        return None
+    r = requests.get(link, headers=BROWSER_UA, timeout=timeout)
+    r.raise_for_status()
+    return parse_reaction(r.text, kind)

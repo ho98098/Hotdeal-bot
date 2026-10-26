@@ -209,10 +209,10 @@ def test_boards_quantity_and_unmatched(tmp_path):
     tg = FakeTG()
     app = App(cfg, Store(str(tmp_path / "q.db")), tg, search_fn=search,
               fetch_fn=lambda s: sources.parse_rss(rss, s["name"]))
-    assert app.check_boards() == 2
+    assert app.check_boards() == 1                       # 시세 비교 불가 글은 바로 안 보냄
     # 5봉 6,000원 -> 12봉 환산 14,400원, 9,900원은 31% 저렴
     assert "31% 저렴" in tg.sent[0] and "14,400원" in tg.sent[0] and "2.4배" in tg.sent[0]
-    assert "시세 비교 불가" in tg.sent[1]
+    assert [p["name"] for p in app._pending()] == ["갤럭시 기프티콘 이벤트"]
 
 
 def test_popular_real_pages(tmp_path):
@@ -437,3 +437,62 @@ def test_category_excludes_appliances(tmp_path):
     tg.queue = [{"update_id": 1, "message": {"chat": {"id": 1}, "text": "/catex 식품 쌀국수"}}]
     app.handle_commands()
     assert sources.match_category("쌀국수 밀키트", cats, app.cat_excludes()) == ""
+
+
+
+def test_parse_reaction_real_pages():
+    import pathlib
+    d = pathlib.Path(__file__).parent / "fixtures"
+    ru = sources.parse_reaction((d / "ruliweb_view.html").read_text("utf-8"), "ruliweb")
+    assert (ru["votes"], ru["comments"]) == (7, 40) and len(ru["texts"]) > 30
+    cl = sources.parse_reaction((d / "clien_view.html").read_text("utf-8"), "clien")
+    assert (cl["votes"], cl["comments"]) == (1, 41) and "순삭이네요? ㅜ" in cl["texts"]
+    eo = sources.parse_reaction((d / "eomisae_view.html").read_text("utf-8"), "eomisae")
+    assert eo["votes"] == 56 and eo["comments"] >= 2
+    assert sources.view_kind("http://www.ppomppu.co.kr/zboard/view.php?id=ppomppu&no=1") is None
+
+
+def test_ppomppu_rss_hits():
+    import pathlib
+    ds = sources.parse_rss((pathlib.Path(__file__).parent / "fixtures" / "ppomppu.xml").read_bytes(), "뽐뿌")
+    d = [x for x in ds if "메가커피" in x.title][0]       # <hits> [1|311|1|0]
+    assert (d.comments, d.votes, d.downvotes) == (1, 1, 0)
+
+
+def _pending_app(tmp_path, react):
+    rss = """<rss><channel><item><title>[카톡선물하기] 메가커피 아메리카노 (1,360원/무료)</title>
+<link>https://bbs.ruliweb.com/market/board/1020/read/1</link></item></channel></rss>""".encode()
+    cfg = {"categories": {"식품": ["커피"]}, "sources": [{"name": "루리웹", "url": "u"}],
+           "request_delay_seconds": 0, "pending": {"check_minutes": 0}}
+    tg = FakeTG()
+    app = App(cfg, Store(str(tmp_path / "pd.db")), tg, search_fn=lambda q: [],
+              fetch_fn=lambda s: sources.parse_rss(rss, s["name"]), react_fn=react)
+    return app, tg
+
+
+def test_pending_waits_then_sends(tmp_path):
+    state = {"r": {"votes": 1, "downvotes": 0, "comments": 2, "texts": ["좋네요"]}}
+    app, tg = _pending_app(tmp_path, lambda link: state["r"])
+    app.check_boards()
+    assert app.check_pending() == 0 and len(app._pending()) == 1     # 반응 부족 -> 대기
+    state["r"] = {"votes": 6, "downvotes": 0, "comments": 4, "texts": ["샀어요", "광고같네"]}
+    assert app.check_pending() == 1 and app._pending() == []
+    assert "반응 확인됨" in tg.sent[0] and "추천 6" in tg.sent[0] and "바이럴 의심 댓글 1개" in tg.sent[0]
+
+
+@pytest.mark.parametrize("r", [
+    {"votes": 9, "downvotes": 0, "comments": 12, "texts": ["업자 광고네", "바이럴 ㅋㅋ", "ㅇㅇ"]},
+    {"votes": 9, "downvotes": 0, "comments": 12, "texts": ["벌써 품절", "종료됐어요"]},
+    {"votes": 3, "downvotes": 5, "comments": 12, "texts": []},
+])
+def test_pending_drops_bad(tmp_path, r):
+    app, tg = _pending_app(tmp_path, lambda link: r)
+    app.check_boards()
+    assert app.check_pending() == 0 and app._pending() == [] and tg.sent == []
+
+
+def test_pending_expires(tmp_path):
+    app, tg = _pending_app(tmp_path, lambda link: {"votes": 0, "downvotes": 0, "comments": 0, "texts": []})
+    app.check_boards()
+    items = app._pending(); items[0]["ts"] -= 4 * 3600; app._save_pending(items)
+    assert app.check_pending() == 0 and app._pending() == []
