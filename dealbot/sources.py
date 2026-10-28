@@ -16,6 +16,10 @@ SHIP_RE = re.compile(r"(?<![\d,.$€¥])(\d{1,3}(?:,\d{3})+|\d{4,})\s*(?:\+\s*|/
 FOREIGN_RE = re.compile(r"(\$|usd|jpy|eur|cny|€|¥|달러|엔|유로|위안|불)\s*$", re.I)
 ENTITY_RE = re.compile(rb"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)")
 MALL_RE = re.compile(r"^\s*\[([^\]]+)\]\s*")
+MALL_PAREN_RE = re.compile(r"^\s*([^\s()\[\]]{1,12})\)\s*")          # 'G마켓) 오리온 ...'
+# 쇼핑몰 이름이 아닌 말머리
+GENERIC_TAGS = ("특가", "핫딜", "오늘만", "한정", "무료", "이벤트", "체험딜", "종료", "품절", "마감", "끌올",
+                "타임딜", "선착순", "공유", "정보", "추천", "강추", "가격오류", "오류", "역대가", "최저가")
 
 
 @dataclass
@@ -60,11 +64,17 @@ def parse_price(text):
 
 def parse_title(title):
     """'[쿠팡] 갤럭시 버즈3 프로 (189,000원/무료)' -> (mall, name, price)"""
-    mall = ""
-    m = MALL_RE.match(title)
-    rest = title
-    if m:
-        mall, rest = m.group(1).strip(), title[m.end():]
+    mall, rest = "", title
+    for _ in range(3):                     # '[특가] [쿠팡] ...' 처럼 말머리가 앞에 붙은 경우 건너뜀
+        m = MALL_RE.match(rest) or MALL_PAREN_RE.match(rest)
+        if not m:
+            break
+        tag = m.group(1).strip()
+        rest = rest[m.end():]
+        if any(g in tag for g in GENERIC_TAGS) or re.fullmatch(r"[\d\s,./%~-]+", tag):
+            continue
+        mall = tag
+        break
     price = parse_price(rest)
     # 끝의 (가격/배송) 괄호와 댓글수 [12] 제거
     name = re.sub(r"\s*\[\d+\]\s*$", "", rest)
@@ -147,6 +157,14 @@ BROWSER_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebK
 
 
 def fetch_source(src, timeout=15):
+    deals = _fetch_source(src, timeout)
+    for d in deals:
+        if not d.mall and src.get("mall"):
+            d.mall = src["mall"]          # 예: 알리뽐뿌 글은 쇼핑몰 표기가 없어도 '알리'
+    return deals
+
+
+def _fetch_source(src, timeout=15):
     kind = src.get("type", "rss")
     if kind in ("coupang_goldbox", "ali_hot"):
         from . import shops

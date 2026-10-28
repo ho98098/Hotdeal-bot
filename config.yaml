@@ -81,6 +81,7 @@ sources:
     url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu"
   - name: 알리뽐뿌
     url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu8"
+    mall: 알리
   - name: 해외뽐뿌
     url: "https://www.ppomppu.co.kr/rss.php?id=ppomppu4"
   - name: 루리웹

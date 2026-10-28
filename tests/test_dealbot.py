@@ -496,3 +496,34 @@ def test_pending_expires(tmp_path):
     app.check_boards()
     items = app._pending(); items[0]["ts"] -= 4 * 3600; app._save_pending(items)
     assert app.check_pending() == 0 and app._pending() == []
+
+
+
+def test_model_suffix_is_different_product():
+    its = [{"title": "로지텍 로지텍G G304rWH LIGHTSPEED 게이밍 마우스 (정품)", "price": 77890, "mall": "다나와", "link": "a"},
+           {"title": "로지텍 G304 LIGHTSPEED 무선 게이밍 마우스", "price": 39000, "mall": "다나와", "link": "b"}]
+    got = market.relevant(its, "로지텍 G304 게이밍마우스")
+    assert [i["price"] for i in got] == [39000]
+    s3 = [{"title": "삼성전자 갤럭시 버즈3 프로 SM-R630N", "price": 1, "mall": "x", "link": "c"}]
+    assert market.relevant(s3, "갤럭시 버즈3 프로 SM-R630")       # 한 글자 차이는 같은 모델
+
+
+@pytest.mark.parametrize("t,mall,name", [
+    ("[특가] YZ 테슬라 핸드폰 홀더(17,750원)", "", "YZ 테슬라 핸드폰 홀더"),
+    ("[특가] [쿠팡] 신라면 40봉 (25,000원/무료)", "쿠팡", "신라면 40봉"),
+    ("G마켓) 오리온 초코파이 96P 1872g(2박스) (20,950원/무료)", "G마켓", "오리온 초코파이 96P 1872g(2박스)"),
+    ("[네이버] 다향 훈제오리 200g x 10 (28,000원/무료)", "네이버", "다향 훈제오리 200g x 10"),
+])
+def test_mall_tags(t, mall, name):
+    m, n, _ = sources.parse_title(t)
+    assert (m, n) == (mall, name)
+
+
+def test_source_default_mall(monkeypatch):
+    rss = "<rss><channel><item><title>QCY 무선 이어폰</title><link>http://p/1</link></item></channel></rss>".encode()
+    class R:
+        content = rss
+        def raise_for_status(self): pass
+    monkeypatch.setattr(sources.requests, "get", lambda *a, **k: R())
+    d = sources.fetch_source({"name": "알리뽐뿌", "url": "u", "mall": "알리"})[0]
+    assert d.mall == "알리"

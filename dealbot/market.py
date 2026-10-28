@@ -164,6 +164,18 @@ def _tokens(s):
     return set(re.findall(r"[0-9a-zA-Z가-힣]+", s.lower()))
 
 
+def _model_match(model, title):
+    """모델명이 같은지. 'G304' 와 'G304rWH' 처럼 뒤에 문자가 2개 이상 더 붙으면 다른 모델로 봄
+    ('SM-R630' 과 'SM-R630N' 처럼 한 글자 차이는 같은 모델로 허용)."""
+    t = title.lower().replace("-", "")
+    for m in re.finditer(re.escape(model) + r"([a-z]*)", t):
+        if m.start() > 0 and t[m.start() - 1].isalnum() and t[m.start() - 1].isascii():
+            continue                       # 'xg304' 처럼 앞에 붙은 경우는 다른 모델
+        if len(m.group(1)) <= 1:
+            return True
+    return False
+
+
 def relevant(items, query, min_overlap=0.6):
     """관련도 순으로 정렬해 반환. 액세서리·중고 제외, 모델명(SM-R640 등)이 있으면 일치 필수."""
     q = _tokens(query)
@@ -173,7 +185,7 @@ def relevant(items, query, min_overlap=0.6):
         if any(x in it["title"] and x not in query for x in EXCLUDE):
             continue
         joined = it["title"].lower().replace(" ", "").replace("-", "")
-        if models and not any(m in joined for m in models):
+        if models and not any(_model_match(m, it["title"]) for m in models):
             continue
         score = sum(1 for t in q if t in joined) / len(q) if q else 1
         if score >= min_overlap:
